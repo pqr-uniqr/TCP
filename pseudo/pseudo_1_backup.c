@@ -2,83 +2,20 @@ PSEUDOCODE for TCP - Connection Establishment
 
 
 [TODOS & NOTES]
-#An in-depth, detailed study on the packet format of the TA node and struct tcphdr
+*An in-depth, detailed study on the packet format of the TA node and struct tcphdr
+	*Receive TA node's first grip, unpack it with your own struct, try hton and stuff to
+	get the exact structure and byte reordering required to communicate with TAnode
 
-#simplify scenario to actual pseudocode
+*simplify scenario to actual pseudocode
 	-this is just so that it's easier to write the pseudocode for sliding window
 
-# multi-key hashing: what do we need?
-	1-lookup by id (file descriptor id)
-	2-lookup by myport, urport, uraddr
+*multi-key hashing
 
-	solution:
-		2 hash tables- one by id, another by myport, urport, and uraddr
-		
-	#make struct port_lookup_key
-	#replacement for having the field listening_socket (fast listening socket lookup)
-		-actually, let's keep struct sockets_on_port
+*File dependency tree
 
-	#functions that need fixes:
-		#v_socket: makes an unbound socket
-			#ID: store with hash handle hh1
-		#v_bind: 
-			-sets myport
-			-sets myaddr to 0  (will be set by v_accept)
-			#store in respective sockets_on_port
-		#v_listen(): makes a passive socket
-			#store in respective sockets_on_port as the listening socket
-		#v_accept(): makes an active socket
-			-here, we get myport, urport, uraddr
-			#store in hh2 hashtable 
-		#v_connect(): makes an active socket
-			#store in hh2 hashtable
-			#store in sockets_on_port
-		#fd_lookup():
-			#hash lookup by id  (hh1)
-		#tcp_handler():
-			*hash lookup by socket_lookup_key
-		#getmaxfd():
-			#hash_iter by id -> no, just keep a global variable
+-tcp_craft_*() functions do NOT hton() for you
 
-//WARNING: when you do v_close
-//	1) delete from hh1
-//	2) delete from hh2
-//	3) delete from sockets_on_port
-
-	
-do File dependency tree
-
-//tcp_craft_*() functions do NOT hton() for you
-
-do when to calculate checksum?
-	*when do we need to calculate checksum? whenever we send something
-	->whenever we call v_write():
-		1-first grip (connection request)
-			v_connect()
-		2-second grip 
-			v_accept()
-		3-third grip
-			tcp_handler()
-		4-beyond third grip (message transfer & acknowledgement)
-			don't know yet 
-
-	*we need a checksum calculation function that takes in:
-		1-saddr and daddr
-		2-protocol (is known)
-		3-tcp length
-		4-tcp header
-		5-data itself
-
-	*test the function with the TAnode ->//TODO I don't know how TAnode calculates checksum
-						//but it ain't looking reasonable
-
-do print_tcp_packet function
-
-?confusion: will every active socket maintain a thread? no. for active sockets,
-	reading from socket will be done manually through the "recv" commmand
-	
-
-
+*when to calculate checksum?
 
 
 
@@ -90,15 +27,44 @@ A (ip:57) <-> B (ip:157)
 	on B: accept 2013
 		calls: void accept_cmd()
 			s = v_socket()
+				//create a new socket (stored at number handle table)
+				struct socket_t *so = malloc(sizeof(socket_t))
+				list_append(so, fd_list)
 			any_addr.s_addr = 0 //all address
 			v_bind(s, any_addr, 2013)
+				//bind to a port
+				socket_t so = "fd_lookup(s, fd_list)"
+				so->myport = 2013
+				so->myaddr = //TODO what to put in here...
+				//(stored at htable list hashed with 2013)
+				list_t *list
+				hash_find(connection_table, port, list)
+				list_append(so)
 			v_listen(s)
+				//make sure this is the only listening socket on the port
+				socket_t so = fd_lookup(s, fd_list);
+				list_t *list
+				hash_find(connection_table, so->port, list)
+				if(list->listening_socket):
+					return -1 //TODO error code
+				//put it as the listening socket
+				list->listening_sock = so 
+				so->state= LISTENING
 			pthread_create(accept_thr_func, (void *) s)
+				//create a thread listening for packets on this socket's
+				//queue
 	on A: connect 157 2013
 		calls: void connect_cmd()
 			inet_atoin(ip_string, &ip_addr)
 			s = v_socket()
 			v_connect(s, ip_addr, port)
+				//bind the socket to a random port
+				v_bind(s, anyaddr, "random port")
+				//find the socket and put ur* info
+				socket_t so = fd_lookup(s, fd_list)
+				so->urport = port
+				so->uraddr = ip_addr
+				//TODO send a connection message (seqnum, SYN)
 				
 	on B: first grip received
 		calls: void tcp_handler(packet, inf, received_bytes)
@@ -108,6 +74,18 @@ A (ip:57) <-> B (ip:157)
 			tcp_ntoh(tcp)
 			//srcaddr destaddr srcport destport
 			if(tcp->syn && !tcp->ack) //connection request
+				list_t *list
+				hash_find(connection_table, tcp->destport, list)
+				//make sure we don't already have him connected
+				socket_t *so = curr->data
+				for(curr = ~~)
+					if(so->uraddr == tcp->srcaddr && so->urport == tcp~~)
+						break;
+				if(so != NULL)
+					//TODO "you're already connected--what is this shit?"
+					
+				else:
+					"queue_that(list->listening_sock->queue, tcp)"
 
 		calls: int v_accept(s, NULL) (on thread)
 			//check if we have a pending request in the queue
@@ -131,12 +109,45 @@ A (ip:57) <-> B (ip:157)
 			if(tcp->syn && !tcp->ack) //not this case!
 			//from here we can assume that the packet is for an active socket?
 			else if(tcp->syn && tcp->ack) //this is the case!
-
+				list_t *list
+				hash_find(connection_table, tcp->destport, list)
+				socket_t *so = curr->data
+				for(curr = ~~)
+					if(so->uraddr == tcp->src && so->urport == tcp~)
+						break;
+				//make sure we have we have a connection with him
+				if(so == NULL)
+					//TODO EDGECASE: "I don't have you on my list -- go away"
+				//make sure that connection is in the right state(SYN_SENT)
+				else if(so->state!= SYN_SENT)
+					//TODO EDGECASE: "Why are you saying hi in the middle 
+					//of a conversation?"
+				//update state to ESTABLISHED
+				else
+					so->state = ESTABLISHED
+				//TODO send back the third grip
+				
 	on B: third grip received
 		calls: void tcp_handler(packet, inf, received_bytes)
 			if(tcp->syn && !tcp->ack)
 			else if(tcp->syn && tcp->ack)
 			else
+				//find the recepient socket
+				list_t *list
+				hash_find(connection_table, tcp->destport,list)
+				socket_t *so = curr->data
+				for(curr = ~)
+					if(so->uraddr==tcp->src&&so->urport==tcp~)
+						break;
+				//make sure we have a connection
+				if(so==NULL)
+					//TODO EDGECASE: "We don't have this connection"
+				//if the state is set to SYN_RCVD, move to ESTABLISHED
+				else if(so->state== SYN_RCVD)
+					so->state== ESTABLISHED
+				//if already ESTABLISHED, this must be a real data transfer
+				else if(so->state== ESTABLISHED)
+					//TODO sliding window starts here
 
 
 
@@ -172,35 +183,26 @@ $macro definition
 
 
 $struct definition
-	//
-	struct socket_t: --FILE:connection_table.h
+	*we need a socket struct
+	struct socket_t: --FILE:connection_table.c
 		int id
-
-		//the following three contiguous fields make up the lookup key
-		uint16_t urport
 		uint16_t myport
-		uint16_t uraddr
-
-		uint32_t myaddr
+		uint16_t urport
+		uint32_t myadddr
+		uint32_t uraddr
 		int state
 		int myseq //for now, increment before crafting a new packet
 		int urseq //for now (window size = 1), sequence number that you're expecting
 		bqueue_t *q
-		
-		//this is for saving active sockets
-		uthash_handle hh1 //lookup by fd
-		uthash_handle hh2 //lookup by urport myport uraddr
 
-	//for finding listening sockets
-	struct sockets_on_port: --FILE: connection_table.h
+	*modify list_t for port-hashed lists to so listening socket can be instantly found
+	struct sockets_on_port: --FILE: connection_table.c
 		uint16_t port
-		int socketcount
 		list_t *list
 		socket_t *listening_socket
-
 		uthash_handle hh
 
-	struct tcphdr{ --FILE: tcputil.h
+	struct tcphdr{
 		uint16_t sourceport;
 		uint16_t destport;
 		uint32_t seqnum;
@@ -209,27 +211,15 @@ $struct definition
 		uint16_t adwindow;
 		uint16_t check;
 		uint16_t urgptr;
-	};
-
-	struct socket_lookup_key{
-		uint16_t urport;
-		uint16_t myport;
-		uint32_t uraddr;
-	};
+	}
 
 
 
 $Global Variable Definitions
-	socket_t *fd_list //linked list of tuples: (int fdnumber, socket_t *socket)
+	list_t *fd_list //linked list of tuples: (int fdnumber, socket_t *socket)
 			//TODO requires intialization!
-	socket_t *socket_table //linked list of tuples: (socket_lookup_key, socket_t)
-	int maxfd = 0
-	unsigned keylen = offsetof(socket_t, myaddr)
-		+sizeof(uint32_t) - offsetof(socket_t, urport)
-	
 
-$includes
-	#include <stddef.h>
+
 
 $function definition 
 	 void accept_cmd(uint16_t port) -- FILE: node.c //TODO ERR CHECKS
@@ -257,16 +247,13 @@ $function definition
 		struct socket_t *so = malloc(sizeof(socket_t)) //TODO free
 		if(so == NULL) return -1 //malloc failed
 		memset(so, 0, sizeof(struct socket_t))
-		so->id = maxfd++
+		so->id = "getmaxfd()"+1
 		so->q = malloc(sizeof(struct bqueue_t))
 		bqueue_init(so->q) //TODO bqueue_destroy
-		//add it to the table of sockets hashed by id
-		hash_add(hh1, fd_list, id, sizeof(int), so);
-		
+		list_append(so, fd_list)
 		return so->id 
 
 	int v_bind(int socket, struct in_addr *addr, uint16_t port) -- FILE: api.c
-		//socket_t *so = malloc(sizeof(socket_t))
 		socket_t *so = fd_lookup(socket)
 		if(so == NULL) return -1 //"no such socket"
 		so->myport = 2013
@@ -292,33 +279,29 @@ $function definition
 		struct in_addr anyaddr
 		anyaddr.s_addr = 0
 		if(lso->state != LISTENING) return -1 //this is not a listening socket
-		//get request
+		//check if we have a reqeust pending -- we always will! it's a blocking q!
 		void *request
-		DQ(lso->q, &request)
+		DQ(lso->q, (void *) &request)
+		//if user wants requester address back, give it
+		if(node != NULL) node->s_addr = request->srcaddr //TODO 
+		if(node != NULL) memcpy(node->s_addr, request+TCPHDRSIZE,SIZE32)
 
 		//make a new socket and fill it with necessary information
 		int s = v_socket()
 		v_bind(s, &anyaddr, lso->myport)
 		nso = fd_lookup(s)
-		memcpy(nso->uraddr, request+TCPHDRSIZE, SIZE32) //ipheader->saddr
-		memcpy(nso->myaddr, request+TCPHDRSIZE+SIZE32, SIZE32) //ipheader->daddr
+		memcpy(nso->myaddr, request+TCPHDRSIZE, SIZE32)
+		memcpy(nso->uraddr, request+TCPHDRSIZE+SIZE32, SIZE32)
 		nso->urport = ((struct tcpheader *)request)->srcport
 		nso->urseq = ((struct tcpheader *)request)->seqnum
 			//TODO Consistency check: incrementation?
 		nso->myseq = rand() % MAXSEQ
 		nso->state = SYN_RCVD 
-
-		//store in hh2 table
-		hash_add(hh2, socket_table, urport, keylen, nso)
-		free(request)
-
-		//ifs user wants request origin's address, give it
-		if(node != NULL) node->s_addr = nso->
+		free(request) 
 
 		//send response (second grip)
 		struct tcp *second_grip = tcp_craft_handshake(2, nso)
 		tcp_hton(second_grip)
-		//TODO calculate checksum
 		v_write(nso, (unsigned char *)second_grip, TCPHDRSIZE)
 		free(second_grip)
 		return s
@@ -326,33 +309,21 @@ $function definition
 	int v_connect(int socket, struct in_addr *addr, uint16_t port) -- FILE: api.c
 		struct in_addr any_addr
 		any_addr.s_addr = 0
-		//bind to a random port and retrieve it
 		v_bind(socket, &any_addr, rand() % MAXPORT)
 		socket_t *so = fd_lookup(socket)
-
+h
 		if(so == NULL) return -1 //"no such socket"
-		//fill in other information
 		so->urport = port
 		so->uraddr = addr.s_addr //pass by value right?
 		so->myseq = rand() % MAXSEQ
 		so->state = SYN_SENT
-
-		//store in respective sockets_on_port struct
-		sockets_on_port *sop = get_sockets_on_port(port)
-		list_append(sop->list,so)
-
-		//store in hh2 hashtable with urport, myport, uraddr
-		hash_add(hh2, socket_table, urport, keylen, so)
-
 		//send a connection message (seqnum, SYN)
-		struct tcphdr *request = tcp_craft_handshake(1, so)
-		tcp_hton(request)
-		//TODO calculate checksum
-		v_write(socket, (unsigned char *)request, TCPHDRSIZE)
-		free(request) 
-	
-	/*  DEPRECATED
+		struct tcphdr *hdr = tcp_craft_handshake(1, so)
+		v_write(socket, (unsigned char *)hdr, TCPHDRSIZE)
+		free(hdr) //TODO Consistency check: malloc?
+		
 	int getmaxfd() -- FILE: something with access to fd_list (probably just node.c)
+		//TODO if 2D hashing becomes possible, this needs a fix
 		//loops through fd_list and returns max fd
 		node_t *curr
 		socket_t *so
@@ -361,14 +332,11 @@ $function definition
 			so = curr->data
 			if(so->id > max) max = so->id
 		return max
-	*/
 
-	
 	socket_t *fd_lookup(int fdnumber) -- FILE: probably just node.c
-		//use hh1 socket->id to find socket_t and return it 
-		socket_t *sock
-		HASH_FIND(hh1, fd_list, &fdnumber, sizeof(int), sock)
-		return sock
+		//TODO if 2D hashing becomes possible, this needs a fix
+		//returns the socket with this handle	
+		//or NULL if not found
 
 	sockets_on_port *get_sockets_on_port(uint16_t port) -- FILE: connection_table.c
 		if(port > MAXPORT) return NULL //"not a valid port number"
@@ -377,12 +345,10 @@ $function definition
 		if(sop == NULL)
 			sop = malloc(sizeof(sockets_on_port))
 			list_t *list = malloc(sizeof(list_t))
-			list_init(&list)
 			sop->port = port
 			hash_add(hh, connection_table, port, sizeof(uint16_t), sop)
 			sop->list = list
 			sop->listening_socket = NULL
-			sop->socketcount = 0
 		return sop
 
 	int v_write(int socket, const unsigned char *buf, uint32_t nbyte) --FILE:api.c
@@ -397,19 +363,7 @@ $function definition
 		//send_ip()
 		return send_ip(nexthop, packet, nbyte+IPHDRSIZE) //fixed this function
 								//so it returns bytes_sent
-	
-
-	//TODO tcp checksum for TA node is extremely unpredictable
-	uint16_t tcp_checksum(uint32_t saddr, uint32_t daddr, int tcplen, char *packet)
-		char *pseudoh = malloc(SIZE32*2 + tcplen)
-		memcpy(pseudoh, saddr, SIZE32)
-		memcpy(pseudoh + SIZE32, daddr, SIZE32)
-		memcpy(pseudoh + 2*SIZE32, packet, tcplen) 
-		int res = ip_sum(pseudoh, SIZE32*2 + tcplen)
-		free(pseudoh)
-		return res
 		
-	
 	void tcp_ntoh(struct tcphdr *header) -- FILE: tcputil.c
 		tcphdr->sourceport = ntohs(tcphdr->sourceport);
 		tcphdr->destport = ntohs(tcphdr->destport);
@@ -437,7 +391,6 @@ $function definition
 					uint16_t adwindow) -- FILE: tcputil.c
 		//pack it
 		struct tcphdr *header = malloc(sizeof(struct tcphdr))
-		memset(header, 0, sizeof(struct tcphdr))
 		header->sourceport = srcport
 		header->destport = destport
 		header->seqnum = seqnum
@@ -448,9 +401,7 @@ $function definition
 		if(psh) PSH_SET(header->orf)
 		if(ack) ACK_SET(header->orf)
 		header->adwindow = adwindow
-		//TODO calculate checksum -> just return it, there will be a separate
-		//function for this
-		return header
+		//TODO calculate checksum
 	
 	//contains MALLOC--I don't think anyone uses this 
 	struct tcphdr *tcp_unpack(char *packet)
@@ -501,22 +452,25 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 	memcpy(tcpheader, tcppart, TCPHDRSIZE)
 	tcp_ntoh(tcpheader) //this is all the ntoh() this program needs
 
-//--------------------------------------------------------------------------
-	//make the lookup key - this is only going to find established connections
-//--------------------------------------------------------------------------
+	//find the destination socket
+	//TODO if 2D hashing becomes possible, this needs a fix
+	sockets_on_port *sop = get_sockets_on_port(tcpheader->destport)
+	if(sop == NULL)
+		free(tcpheader)
+		return -1 //"dropped: packet destined for an impossible port number"
+	if(sop->listening_sock == NULL)
+		free(tcp)
+		return -1 //"we ain't listening on this port"
+	for(curr=sop->list->head;curr!=NULL;curr=curr->next)
+		so = curr->data
+		if(so->uraddr==ipheader->srcaddr&&so->urport==tcpheader->sourceport)
+			break
 
-	//connection request (first grip) - header will be queued - don't FREE
+	//connection request (first grip)	
 	if(SYN(tcpheader->orf) && !ACK(tcpheader->orf))
-		sockets_on_port *sop = get_sockets_on_port(tcpheader->destport)
-		if(sop == NULL)
-			free(tcpheader)
-			return -1 //"packet destined for an impossible port number"
-		if(sop->listening_sock == NULL)
-			free(tcpheader)
-			return -1 //"we ain't listening on this port"	
 		if(so != NULL)
-			free(tcpheader) //"this guy is already connected"
-			return -1
+			free(tcpheader)
+			return -1 //"this guy is already connected"
 		//connection request needs to include src/dest address
 		realloc(tcpheader, TCPHDRSIZE + 2*SIZE32)
 		memcpy(tcpheader+ TCPHDRSIZE, ipheader->saddr,SIZE32);
@@ -524,38 +478,27 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 		//queue the request for the accept thread
 		NQ(sop->listening_sock->q, tcpheader)
 
-	//if this is not a connection request, we should be able to find this socket
-	//in the hash table
-	else: 	
-		//make the key
-		socket_lookup_key *key = malloc(sizeof(socket_lookup_key))
-		memset(key,0,sieof(socket_lookup_key))
-		key->urport = tcpheader->sourceport
-		key->myport = tcpheader->destport
-		key->uraddr = ipheader->saddr
-		socket_t *so
-		hash_find(hh2,socket_table, &key->urport, keylen,so)
-		free(key)
-		if(so == NULL)
+	//second grip received
+	//TODO kinda worried this might include other cases?
+	else if (SYN(tcpheader->orf) && ACK(tcpheader->orf))
+		if(so == NULL) 
 			free(tcpheader)
-			return -1 //"non-request packet received from stranger"
-
-	//second grip received -- packet will be taken into account - FREE tcpheader
-	if (SYN(tcpheader->orf) && ACK(tcpheader->orf))
+			return -1 //"non-reqest packets received from stranger"
 		if(so->state != SYN_SENT)
 			free(tcpheader)
 			return -1 //"packet inappropriate for current connection state"
 		so->state = ESTABLISHED
 		//second grip
-		struct tcphdr *third_grip = tcp_craft_handshake(3, so)
-		tcp_hton(third_grip)
-		//TODO checksum calculation
-		v_write(so, (unsigned char *)third_grip, TCPHDRSIZE)
-		free(third_grip)
-		free(tcpheader)
+		struct tcphdr *second_grip = tcp_craft_handshake(3, so)
+		tcp_hton(second_grip)
+		v_write(so, (unsigned char *)second_grip, TCPHDRSIZE)
+		free(hdr)
 
 	//third grip and beyond
 	else
+		if(so==NULL)
+			free(tcp)
+			return -1 //"non-request packets received from stranger"
 		if(so->state == ESTABLISHED) 
 			//TODO sliding window goes here
 		else if(so->state == SYN_RCVD) so->state == ESTABLISHED //3WH done
