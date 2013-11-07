@@ -54,9 +54,9 @@
 typedef struct llist {
 	struct llist *l_next;
 	struct llist *l_prev;
-} list_t, list_link_t;
+} list_link_t;
 
-#define list_init(list) \
+#define llist_init(list) \
     (list)->l_next = (list)->l_prev = (list);
 
 #define list_link_init(link) \

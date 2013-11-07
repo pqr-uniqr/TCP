@@ -3,7 +3,6 @@
 #include "dbg.h"
 #include <stdlib.h>
 #include <errno.h>
-#include <pthread.h>
 
 static int __bqueue_dequeue( bqueue_t *q, void **data,
                              const struct timespec *rel_timeout );
@@ -14,7 +13,7 @@ int bqueue_init( bqueue_t *q ) {
     
     pthread_cond_init( &q->q_cond, NULL );
 
-    list_init( &q->q_list );
+    llist_init( &q->q_list );
     q->q_status = q->q_count = 0;
 
     return 0;

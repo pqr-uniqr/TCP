@@ -2,6 +2,42 @@ PSEUDOCODE for TCP - Connection Establishment
 
 
 [TODOS & NOTES]
+
+do connection timeout feature
+	*list.c has no deletion feature !!! do this
+	*uses a fake int counter: change that to a real time_t timer
+	*UTHASH has no support for HASH_DEL on hh1 and hh2 ->temporary solution:
+			-add attribute to socket_t that represents deleted state
+
+do determine MAXSEQ
+
+do debug compiler mode
+
+do when to calculate checksum? "DELAYED: NOT A BLOCKING ISSUE"
+	*when do we need to calculate checksum? whenever we send something
+	->whenever we call v_write():
+		1-first grip (connection request)
+			v_connect()
+		2-second grip 
+			v_accept()
+		3-third grip
+			tcp_handler()
+		4-beyond third grip (message transfer & acknowledgement)
+			don't know yet 
+
+	*we need a checksum calculation function that takes in:
+		1-saddr and daddr
+		2-protocol (is known)
+		3-tcp length
+		4-tcp header
+		5-data itself
+
+	*test the function with the TAnode ->//TODO I don't know how TAnode calculates checksum
+						//but it ain't looking reasonable
+						
+						
+						
+
 #An in-depth, detailed study on the packet format of the TA node and struct tcphdr
 
 #simplify scenario to actual pseudocode
@@ -36,43 +72,42 @@ PSEUDOCODE for TCP - Connection Establishment
 		#fd_lookup():
 			#hash lookup by id  (hh1)
 		#tcp_handler():
-			*hash lookup by socket_lookup_key
-		#getmaxfd():
+			*hash lookup by socket_lookup_key #getmaxfd():
 			#hash_iter by id -> no, just keep a global variable
 
-//WARNING: when you do v_close
+//TODO how is termination signalled? v_accept returns -1
+//when the socket is not listening any more
+
+
+//TODO : when you do v_close
 //	1) delete from hh1
 //	2) delete from hh2
 //	3) delete from sockets_on_port
 
-	
-do File dependency tree
+#print_tcp_packet function
+
+
+#pack data offset
+
+#setstate functions
+
+#fix the parameters for cmd functions
+
+//different ways to store and lookup sockets
+//hh1 - by id --stored by v_socket()
+//hh2 - by (urport, myport, uraddr) --done by v_connect() and v_accept()
+//get_sockets_on_port --done by v_bind() (additionally by v_listen for listeners)
+
+#dependenecy stuff
+	*1-make sure all the functions are assigned in their correct file
+	*2-figure out dependency for each of them
+	*3-make the dependency tree
+	*4-write the header file for all the files
+
+#write the actual code
+	-follow the scenario
 
 //tcp_craft_*() functions do NOT hton() for you
-
-do when to calculate checksum?
-	*when do we need to calculate checksum? whenever we send something
-	->whenever we call v_write():
-		1-first grip (connection request)
-			v_connect()
-		2-second grip 
-			v_accept()
-		3-third grip
-			tcp_handler()
-		4-beyond third grip (message transfer & acknowledgement)
-			don't know yet 
-
-	*we need a checksum calculation function that takes in:
-		1-saddr and daddr
-		2-protocol (is known)
-		3-tcp length
-		4-tcp header
-		5-data itself
-
-	*test the function with the TAnode ->//TODO I don't know how TAnode calculates checksum
-						//but it ain't looking reasonable
-
-do print_tcp_packet function
 
 ?confusion: will every active socket maintain a thread? no. for active sockets,
 	reading from socket will be done manually through the "recv" commmand
@@ -94,6 +129,7 @@ A (ip:57) <-> B (ip:157)
 			v_bind(s, any_addr, 2013)
 			v_listen(s)
 			pthread_create(accept_thr_func, (void *) s)
+
 	on A: connect 157 2013
 		calls: void connect_cmd()
 			inet_atoin(ip_string, &ip_addr)
@@ -122,7 +158,7 @@ A (ip:57) <-> B (ip:157)
 			so->seqnum = tcp->seqnum
 			so->state = SYN_RCVD
 			free(tcp)
-			//TODO send a response (seqnum+1)
+			//send a response (seqnum+1)
 			return newso
 			
 	on A: second grip receieved
@@ -139,17 +175,56 @@ A (ip:57) <-> B (ip:157)
 			else
 
 
+[Secondary Scenario: Connection Timeout (from the client)]
+v_connect()
+	sends a request packet and return
+	leaving the socket in state SYN_SENT
+
+The main thread goes back to select()
+now, when the instruction pointer reads through the program,
+it needs to know that it is "expecting" a packet : 
+	*global variable int expect
+
+
+
+#it in set_socketstate (that's where all the global variables are extern-ed anyways)
+	when v_connect() is called, before it returns, set expect = 1
+	when v_accept() is called, set expect = 1 
+
+in the main function: 
+	if(expect){
+		//do things that you would do if expectation is not met
+		*for sockets that are expecting packets (SYN_SENT, SYN_RCVD)
+			*increment "timer"
+			*if timer is at timeout:
+				report timeout to user and remove the socket: hh1, hh2, sop
+			*if not:
+				if socket is in SYN_SENT
+						tcp_craft_handshake(1, socket)
+				if socket is in SYN_RCVD
+						tcp_craft_handshake(2,socket)
+		if no such socket is found,
+			expect = 0
+	}
+
+
+
+
 
 [DEFINITIONS]
 
 $macro definition
+	//size macros --now in common.h
+	#define SIZE32 sizeof(uint32_t)
+
+	//program-wide macros --now in common.h
 	#define MAXPORT 131071 //2^17-1
 	#define MAXSEQ //TODO how to derive maximum sequence number
-	#define TCPHDRSIZE sizeof(struct tcphdr)
-	#define SIZE32 sizeof(uint32_t)
 	#define NQ dqueue_enqueue //use if confident i.e. NQ(q, data)
 	#define DQ dqueue_dequeue //use if confident i.e. DQ(q, &data)
 
+	//macros for tcputil.c --now in tcputil.h
+	#define TCPHDRSIZE sizeof(struct tcphdr)
 	#define HDRLEN(orf) ((0xf000)>>12)
 	#define URG(orf) ((0x20 & orf) >>5)
 	#define ACK(orf) ((0x10 & orf) >>4)
@@ -157,7 +232,6 @@ $macro definition
 	#define RST(orf) ((0x04 & orf) >>2)
 	#define SYN(orf) ((0x02 & orf) >>1)
 	#define FIN(orf) ((0x01 & orf))
-
 	#define URG_SET(orf) (orf |= 0x20)
 	#define ACK_SET(orf) (orf |= 0x10)
 	#define PSH_SET(orf) (orf |= 0x08)
@@ -165,6 +239,7 @@ $macro definition
 	#define SYN_SET(orf) (orf |= 0x02)
 	#define FIN_SET(orf) (orf |= 0x01)
 
+	//state machine macros --now in common.h
 	#define LISTENING 0
 	#define SYN_RCVD 1
 	#define SYN_SENT 2
@@ -173,13 +248,13 @@ $macro definition
 
 $struct definition
 	//
-	struct socket_t: --FILE:connection_table.h
+	struct socket_t: --FILE:now in socket_table.h
 		int id
 
 		//the following three contiguous fields make up the lookup key
 		uint16_t urport
 		uint16_t myport
-		uint16_t uraddr
+		uint32_t uraddr
 
 		uint32_t myaddr
 		int state
@@ -192,15 +267,15 @@ $struct definition
 		uthash_handle hh2 //lookup by urport myport uraddr
 
 	//for finding listening sockets
-	struct sockets_on_port: --FILE: connection_table.h
+	struct sockets_on_port: --FILE: now in socket_table.h
 		uint16_t port
-		int socketcount
+		//int socketcount //is this still necessary?
 		list_t *list
 		socket_t *listening_socket
 
 		uthash_handle hh
 
-	struct tcphdr{ --FILE: tcputil.h
+	struct tcphdr{ --FILE:now in tcputil.h
 		uint16_t sourceport;
 		uint16_t destport;
 		uint32_t seqnum;
@@ -211,7 +286,7 @@ $struct definition
 		uint16_t urgptr;
 	};
 
-	struct socket_lookup_key{
+	struct socket_lookup_key{ --FILE:now in socket_table.h
 		uint16_t urport;
 		uint16_t myport;
 		uint32_t uraddr;
@@ -219,20 +294,22 @@ $struct definition
 
 
 
-$Global Variable Definitions
+$Global Variable Definitions --FILE: now in node and socket_table
 	socket_t *fd_list //linked list of tuples: (int fdnumber, socket_t *socket)
-			//TODO requires intialization!
 	socket_t *socket_table //linked list of tuples: (socket_lookup_key, socket_t)
-	int maxfd = 0
-	unsigned keylen = offsetof(socket_t, myaddr)
+	int maxsockfd = 0
+	unsigned keylen = offsetof(socket_t, uraddr) //this has been tested
 		+sizeof(uint32_t) - offsetof(socket_t, urport)
 	
 
 $includes
-	#include <stddef.h>
+	#include <stddef.h> -- FILE: now in common.h
 
 $function definition 
-	 void accept_cmd(uint16_t port) -- FILE: node.c //TODO ERR CHECKS
+		void print_sockets() -- FILE: sockets_table
+		void print_socket(socket_t *sock) --FILE: sockets_table
+	 #void accept_cmd(const char *line) --FILE: now in node
+		uint16_t port //TODO string parsing
 		pthread_t accept_thr
 		pthread_attr_t thr_attr
 		struct in_addr any_addr
@@ -247,17 +324,18 @@ $function definition
 		pthread_create(&accept_thr,&thr_attr,accept_thr_func, (void *) s)
 		pthread_attr_destroy(&thr_attr)
 
-	void connect_cmd(const char *addr, uint16_t port) -- FILE: node.c //TODO ERR CHECKS
+	#void connect_cmd(const char *line)-- FILE: now in node //TODO ERR CHECKS
+		const char *addr, uint16_t port
 		struct in_addr ip_addr
 		inet_aton(addr, &ip_addr)
 		int s = v_socket()
 		v_connect(s, &ip_addr, port)
 		
-	int v_socket() -- FILE: api.c
+	#int v_socket() -- FILE: now in v_api
 		struct socket_t *so = malloc(sizeof(socket_t)) //TODO free
 		if(so == NULL) return -1 //malloc failed
 		memset(so, 0, sizeof(struct socket_t))
-		so->id = maxfd++
+		so->id = maxsockfd++
 		so->q = malloc(sizeof(struct bqueue_t))
 		bqueue_init(so->q) //TODO bqueue_destroy
 		//add it to the table of sockets hashed by id
@@ -265,18 +343,17 @@ $function definition
 		
 		return so->id 
 
-	int v_bind(int socket, struct in_addr *addr, uint16_t port) -- FILE: api.c
+	#int v_bind(int socket, struct in_addr *addr, uint16_t port) -- FILE: now in v_api
 		//socket_t *so = malloc(sizeof(socket_t))
 		socket_t *so = fd_lookup(socket)
 		if(so == NULL) return -1 //"no such socket"
 		so->myport = 2013
 		so->myaddr = 0 //TODO temporary decision: might be something else?
 		sockets_on_port *sop = get_sockets_on_port(port)
-		if(sop == NULL) return -1 //"not a valid port number"
 		list_append(sop->list, so)
 		return 0
 
-	int v_listen(int socket) -- FILE: api.c
+	#int v_listen(int socket) -- FILE: now in v_api
 		socket_t *so = fd_lookup(socket)
 		if(so == NULL) return -1
 		sockets_on_port *sop = get_sockets_on_port(so->myport)
@@ -286,7 +363,7 @@ $function definition
 		so->state = LISTENING
 		return 0
 
-	int v_accept(int socket, struct in_addr *node) -- FILE: api.c
+	#int v_accept(int socket, struct in_addr *node) -- FILE: now in v_api
 		//lso -- listening socket nso-- new active socket
 		socket_t *nso, *lso = fd_lookup(socket)
 		struct in_addr anyaddr
@@ -323,7 +400,7 @@ $function definition
 		free(second_grip)
 		return s
 
-	int v_connect(int socket, struct in_addr *addr, uint16_t port) -- FILE: api.c
+	#int v_connect(int socket, struct in_addr *addr, uint16_t port) -- FILE: now in v_api
 		struct in_addr any_addr
 		any_addr.s_addr = 0
 		//bind to a random port and retrieve it
@@ -364,28 +441,28 @@ $function definition
 	*/
 
 	
-	socket_t *fd_lookup(int fdnumber) -- FILE: probably just node.c
+	#socket_t *fd_lookup(int fdnumber) -- FILE:now in socket_table.h
 		//use hh1 socket->id to find socket_t and return it 
 		socket_t *sock
 		HASH_FIND(hh1, fd_list, &fdnumber, sizeof(int), sock)
 		return sock
 
-	sockets_on_port *get_sockets_on_port(uint16_t port) -- FILE: connection_table.c
+	#sockets_on_port *get_sockets_on_port(uint16_t port) -- FILE: now in socket_table.h
 		if(port > MAXPORT) return NULL //"not a valid port number"
 		sockets_on_port *sop
-		hash_find(hh, connection_table, &port,, sizeof(uint16_t), sop)
+		hash_find(hh, socket_table, &port,, sizeof(uint16_t), sop)
 		if(sop == NULL)
 			sop = malloc(sizeof(sockets_on_port))
 			list_t *list = malloc(sizeof(list_t))
 			list_init(&list)
 			sop->port = port
-			hash_add(hh, connection_table, port, sizeof(uint16_t), sop)
+			hash_add(hh, socket_table, port, sizeof(uint16_t), sop)
 			sop->list = list
 			sop->listening_socket = NULL
 			sop->socketcount = 0
 		return sop
 
-	int v_write(int socket, const unsigned char *buf, uint32_t nbyte) --FILE:api.c
+	#int v_write(int socket, const unsigned char *buf, uint32_t nbyte) --FILE: now in api.c
 		//MTU check
 		if(nbyte + IPHDRSIZE > MTU) return -1 
 		//get nexthop
@@ -399,8 +476,9 @@ $function definition
 								//so it returns bytes_sent
 	
 
-	//TODO tcp checksum for TA node is extremely unpredictable
+	//TODO How exactly is the checksum calculated?
 	uint16_t tcp_checksum(uint32_t saddr, uint32_t daddr, int tcplen, char *packet)
+			--FILE: tcputil.c
 		char *pseudoh = malloc(SIZE32*2 + tcplen)
 		memcpy(pseudoh, saddr, SIZE32)
 		memcpy(pseudoh + SIZE32, daddr, SIZE32)
@@ -410,7 +488,7 @@ $function definition
 		return res
 		
 	
-	void tcp_ntoh(struct tcphdr *header) -- FILE: tcputil.c
+	#void tcp_ntoh(struct tcphdr *header) -- FILE: now in tcputil
 		tcphdr->sourceport = ntohs(tcphdr->sourceport);
 		tcphdr->destport = ntohs(tcphdr->destport);
 		tcphdr->seqnum = ntohl(tcphdr->seqnum);
@@ -420,7 +498,7 @@ $function definition
 		tcphdr->check = ntohs(tcphdr->check);
 		tcphdr->urgptr= ntohs(tcphdr->urgptr);
 
-	void tcp_hton(struct tcphdr *header) -- FILE: tcputil.c
+	#void tcp_hton(struct tcphdr *header) -- FILE: now in tcputil
 		tcphdr->sourceport = htons(tcphdr->sourceport);
 		tcphdr->destport = htons(tcphdr->destport);
 		tcphdr->seqnum = htonl(tcphdr->seqnum);
@@ -431,10 +509,10 @@ $function definition
 		tcphdr->urgptr= htons(tcphdr->urgptr);
 
 	//contains MALLOC
-	struct tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
+	#struct tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
 					uint32_t seqnum, uint32_t acknum,
 					bool fin, bool syn, bool rst, bool psh, bool ack
-					uint16_t adwindow) -- FILE: tcputil.c
+					uint16_t adwindow) -- FILE: now in tcputil
 		//pack it
 		struct tcphdr *header = malloc(sizeof(struct tcphdr))
 		memset(header, 0, sizeof(struct tcphdr))
@@ -452,15 +530,38 @@ $function definition
 		//function for this
 		return header
 	
-	//contains MALLOC--I don't think anyone uses this 
-	struct tcphdr *tcp_unpack(char *packet)
+	//contains MALLOC--I don't think anyone uses this
+	#struct tcphdr *tcp_unpack(char *packet)
 		struct tcphdr *header = malloc(sizeof(struct tcphdr))
 		header = (struct tcphdr *) packet+IPHDRSIZE
 		
 	"char *encapsulate_intcp()" - not needed until sliding window
 
+
+	#void tcp_print_packet(struct tcphdr *header) --FILE: now in tcputil
+		printf("TCP HEADER---------------\n");
+		printf("sourceport %u\n", header->sourceport);
+		printf("destport %u\n", header->destport);
+		printf("seqnum %lu\n", header->seqnum);
+		printf("ack_seq %lu\n", header->ack_seq);
+		printf("data offset: %d\n", (header->orf & 0xf000)>>12);
+		printf("res: %d\n", (header->orf &0xFC0)>>6);
+		printf("flags: \n");
+		printf("	URG? %d\n", (header->orf & 0x20)>>5);
+		printf("	ACK? %d\n", (header->orf & 0x10)>>4);
+		printf("	PSH? %d\n", (header->orf & 0x08)>>3);
+		printf("	RST? %d\n", (header->orf & 0x04)>>2);
+		printf("	SYN? %d\n", (header->orf & 0x02)>>1);
+		printf("	FIN? %d\n", (header->orf & 0x01));
+		printf("adwindow: %u\n", header->adwindow);
+		printf("check: %u\n", header->check);
+		printf("urgptr: %u\n",header->urgptr);
+		printf("------------------------\n\n");
+
+		
+
 	//contains MALLOC
-	struct tcphdr *tcp_craft_handshake(int gripnum, socket_t *socket) -- FILE: tcputil.c
+	#struct tcphdr *tcp_craft_handshake(int gripnum, socket_t *socket) -- FILE: now in tcputil.c
 		switch(gripnum)
 			case 1
 				//first grip (make seqnum, SYN)
@@ -487,9 +588,15 @@ $function definition
 							0,0,0,0,1
 							0,)
 
+
+
+
+
 $Setup
 	time_t t
 	srand((unsigned) time(&t))
+
+
 
 $Event Loop: void tcp_handler(pack, inf, received_bytes)
 	socket_t *so
@@ -500,10 +607,6 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 	struct tcphdr *tcpheader = (struct tcphdr *) malloc(TCPHDRSIZE)
 	memcpy(tcpheader, tcppart, TCPHDRSIZE)
 	tcp_ntoh(tcpheader) //this is all the ntoh() this program needs
-
-//--------------------------------------------------------------------------
-	//make the lookup key - this is only going to find established connections
-//--------------------------------------------------------------------------
 
 	//connection request (first grip) - header will be queued - don't FREE
 	if(SYN(tcpheader->orf) && !ACK(tcpheader->orf))
@@ -524,7 +627,7 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 		//queue the request for the accept thread
 		NQ(sop->listening_sock->q, tcpheader)
 
-	//if this is not a connection request, we should be able to find this socket
+	//if this is not a connection request, we should be able to find the socket
 	//in the hash table
 	else: 	
 		//make the key
@@ -546,7 +649,7 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 			free(tcpheader)
 			return -1 //"packet inappropriate for current connection state"
 		so->state = ESTABLISHED
-		//second grip
+		//thrid grip
 		struct tcphdr *third_grip = tcp_craft_handshake(3, so)
 		tcp_hton(third_grip)
 		//TODO checksum calculation
@@ -569,9 +672,5 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 
 
 
-
-
-
-[Experimentation with TAnode]
 
 

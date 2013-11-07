@@ -3,7 +3,9 @@
 #include "csupport/ipsum.h"
 #include "csupport/colordefs.h"
 #include "csupport/uthash.h"
+#include "csupport/bqueue.h"
 #include <stdlib.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <netdb.h>
@@ -44,6 +46,7 @@
 #define LOCAL		1
 
 #define IPHDRSIZE sizeof(struct iphdr)
+#define SIZE32	sizeof(uint32_t)
 
 #define IP 0
 #define RIP 200
@@ -51,6 +54,17 @@
 
 #define REFRESH_TIME	15
 
+//TCP macros
+#define MAXPORT 65535 //2^17-1
+#define MAXSEQ 50 //TODO derive maximum sequence number
+#define NQ bqueue_enqueue
+#define DQ bqueue_dequeue
+
+//TCP state machine macros
+#define LISTENING 0
+#define SYN_SENT 1
+#define SYN_RCVD 2
+#define ESTABLISHED 3
 
 
 //uint32_t route_lookup(uint32_t final_dest); DEPRECATED

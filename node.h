@@ -1,4 +1,4 @@
-#include "interface.h"
+#include "v_api.h"
 
 
 void rip_handler(const char *, interface_t *inf, int received_bytes);
@@ -7,9 +7,28 @@ void tcp_handler(const char *, interface_t *inf, int received_bytes);
 
 void decrement_ttl();
 void regular_update(int *timer);
-int rt_init();
+
+int rt_init(); //TODO this can be incorporated into interface.
 void broadcast_rip_table();
-interface_t *get_nexthop(uint32_t dest_vip);
+//interface_t *get_nexthop(uint32_t dest_vip);
+
 void print_interfaces();
 void print_routes();
 void print_help();
+
+//cmd functions
+void accept_cmd(const char *line);
+void connect_cmd(const char *line);
+/*  
+void help_cmd(const char *line);
+void interfaces_cmd(const char *line);
+void routes_cmd(const char *line);
+void sockets_cmd(const char *line);
+void down_cmd(const char *line);
+void up_cmd(const char *line);
+void send_cmd(const char *line);
+void recv_cmd(const char *line);
+void sendfile_cmd(const char *line);
+void recvfile_cmd(const char *line);
+void shutdown_cmd(const char *line);
+void close_cmd(const char *line); */

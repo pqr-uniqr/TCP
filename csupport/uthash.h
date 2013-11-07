@@ -248,6 +248,7 @@ do {                                                                            
 } while (0)
 
 
+
 /* convenience forms of HASH_FIND/HASH_ADD/HASH_DEL */
 #define HASH_FIND_STR(head,findstr,out)                                          \
     HASH_FIND(hh,head,findstr,strlen(findstr),out)
@@ -269,6 +270,8 @@ do {                                                                            
     HASH_REPLACE(hh,head,ptrfield,sizeof(void *),add,replaced)
 #define HASH_DEL(head,delptr)                                                    \
     HASH_DELETE(hh,head,delptr)
+#define HASH_DELM(hh,head, delptr)																							 \
+		HASH_DELETE(hh, head, delptr)
 
 /* HASH_FSCK checks hash integrity on every add/delete when HASH_DEBUG is defined.
  * This is for uthash developer only; it compiles away if HASH_DEBUG isn't defined.

@@ -5,15 +5,19 @@
 extern "C" {
 #endif
 
-#include <pthread.h>
 #include <assert.h>
+
+
+//HYUN SIK KIM: quick hack to define structs for pthread.h
+#include <sys/types.h>
+#include <pthread.h>
 #include <time.h>
 #include "bq_list.h"
 
 typedef struct bqueue {
     pthread_mutex_t q_mtx;              /* for synchronization */
     pthread_cond_t q_cond;              /* for a-wakin' up */
-    list_t q_list;                      /* stores the data */
+    list_link_t q_list;                      /* stores the data */
     int q_status;                       /* 0 if init'd, 1 if destroyed */
     int q_count;                        /* count of waiting threads */
 } bqueue_t;

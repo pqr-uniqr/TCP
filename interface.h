@@ -1,4 +1,4 @@
-#include "ip_common.h"
+#include "common.h"
 #include "rip.h"
 #include "iputil.h"
 
@@ -23,10 +23,12 @@ struct interface_t{
 	int mtu;
 };
 int setup_interface(char *filename);
-void up_interface(int id);
-void down_interface(int id);
+void up_interface(const char *arg);
+void down_interface(const char *arg);
 int get_socket (uint16_t portnum, struct addrinfo **source, int type);
 int get_addr(uint16_t portnum, struct addrinfo **addr, int type);
-int send_ip(interface_t *inf, char *packet, int packetsize);
+int send_ip(interface_t *inf, const char *packet, int packetsize);
 int id_address(uint32_t destaddr);
+
+interface_t *get_nexthop(uint32_t dest_vip);
 

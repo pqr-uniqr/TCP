@@ -19,7 +19,6 @@
 #include "interface.h"
 
 
-
 int id_address(uint32_t destaddr){
 	node_t *curr;
 	for(curr=interfaces->head;curr!=NULL;curr=curr->next){
@@ -30,6 +29,31 @@ int id_address(uint32_t destaddr){
 	}
 	return 0;
 }
+
+
+
+interface_t *get_nexthop(uint32_t dest_vip){
+	rtu_routing_entry *entry;
+	HASH_FIND(hh, routing_table, &dest_vip, sizeof(uint32_t), entry);
+
+	if(entry == NULL){
+		printf("Destination not found in routing table\n");
+		return NULL;
+	}
+
+	node_t *curr;
+	for(curr=interfaces->head; curr!=NULL; curr=curr->next){
+		interface_t *inf = (interface_t *) curr->data;
+		if(inf->destvip == entry->nexthop){
+			return inf;
+		}
+	}
+	printf("Interface not found for this nexthop address\n");
+	return NULL;
+}
+
+
+
 
 int setup_interface(char *filename) {
 
@@ -80,7 +104,14 @@ int setup_interface(char *filename) {
 
 
 //ups an interface
-void up_interface(int id){
+void up_interface(const char *arg){
+	unsigned id;
+	int ret;
+	ret = sscanf(arg, "up %u", &id);
+	if(ret != 1){
+		fprintf(stderr, "syntax error (usage: down[interface])\n");
+		return;
+	}
 
 	node_t *curr;
 	interface_t *inf;
@@ -103,7 +134,15 @@ void up_interface(int id){
 
 
 //downs an interface
-void down_interface(int id){
+void down_interface(const char *arg){
+	unsigned id;
+	int ret;
+	ret = sscanf(arg, "down %u", &id);
+	if(ret != 1){
+		fprintf(stderr, "syntax error (usage: down[interface])\n");
+		return;
+	}
+
 	node_t *curr;
 	interface_t *inf;
 
@@ -125,7 +164,7 @@ void down_interface(int id){
 
 
 //takes in the next hop's interface and sends the packet to it.
-int send_ip (interface_t *inf, char *packet, int packetsize) {
+int send_ip (interface_t *inf, const char *packet, int packetsize) {
 	int bytes_sent;
 	char tbs[packetsize];
 	memcpy(tbs, packet, packetsize);
