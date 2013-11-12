@@ -97,7 +97,7 @@ void print_socket(socket_t *s){
 	inet_ntop(AF_INET, &s->uraddr, her, INET_ADDRSTRLEN);
 
 	printf("SOCKET ID: %d \nconnection{%s (this node) (port: %d)\n <--%s--> (port: %d) %s }\n", s->id,me,s->myport,state_names[s->state].name,s->urport,her);
-	printf("		(at seqnum %d) 		(at seqnum %d)\n",s->myseq,s->urseq);
+	printf("		(at seqnum %d) 		(at seqnum %d)\n",s->myseq,s->ackseq);
 }
 
 void set_socketstate(socket_t *so, int state){

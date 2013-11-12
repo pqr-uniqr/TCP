@@ -1,4 +1,3 @@
-//#include "common.h"
 #include "node.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -6,8 +5,8 @@
 
 int maxfd;
 list_t  *interfaces, *routes;
-socket_t *fd_list; //hash table (id, socket) TODO init?
-socket_t *socket_table; //hash table ({urport, myport, uraddr}, socket) //TODO init?
+socket_t *fd_list; //hash table (id, socket) 
+socket_t *socket_table; //hash table ({urport, myport, uraddr}, socket) 
 sockets_on_port *sockets_by_port;
 rtu_routing_entry *routing_table;
 fd_set masterfds;
@@ -89,8 +88,11 @@ int main ( int argc, char *argv[]) {
 
 	while(1){
 
+		//TODO these functions should be modified to count time
 		regular_update(&updateTimer);
 		decrement_ttl();
+
+		//
 		readfds = masterfds;
 		tvcopy = tv;
 
@@ -139,6 +141,9 @@ int main ( int argc, char *argv[]) {
 			}
 		}
 
+
+
+		
 		//command line parsing
 		if(FD_ISSET(0, &readfds)){
 			unsigned k;
@@ -195,6 +200,9 @@ int main ( int argc, char *argv[]) {
 }
 
 
+
+
+
 //initial branching of cases will happen here!
 void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 	struct iphdr *ipheader = malloc(sizeof(struct iphdr));
@@ -210,9 +218,13 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 		sockets_on_port *sop = get_sockets_on_port(tcpheader->destport);
 		if(sop->listening_socket== NULL){
 			printf("we ain't listening on this port\n");
-			free(ipheader);
+			//TODO send an RST packet
+			//tcphdr *rst = tcp_craft(handshake(0, NULL));
+			//tcp_hton(rst);
+			//goto cleanup; //"we ain't listening on this port"
 			free(tcpheader);
-			return; //"we ain't listening on this port"
+			free(ipheader);
+			return;
 		}
 
 		//TODO check if this guy is already connected
@@ -222,11 +234,10 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 		memcpy(tbq+TCPHDRSIZE, &ipheader->saddr, SIZE32);
 		memcpy(tbq+TCPHDRSIZE+SIZE32, &ipheader->daddr, SIZE32);
 		NQ(sop->listening_socket->q, tbq);
+		//goto cleanup;
 	} 
 
 	//if not first grip
-	//if we use  threads for every socket
-	//
 	else {
 		//it must be an active socket--look for it in hh2 
 		socket_lookup_key *key = malloc(sizeof(socket_lookup_key));
@@ -240,40 +251,39 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 		if(so == NULL){
 			free(tcpheader);
-			free(ipheader);
-			return;  //"non-request packet received from stranger"
+			free(ipheader);//"non-request packet received from stranger"
+			return;
 		}
 
 		//second grip
 		if(SYN(tcpheader->orf) && ACK(tcpheader->orf)){
 			if(so->state != SYN_SENT){
-					free(tcpheader);
-					free(ipheader);
-					return; //"packet inappropriate for current connection state"
+					//goto cleanup; //"packet inappropriate for current connection state"
 			}
 			set_socketstate(so, ESTABLISHED);
-			so->urseq = tcpheader->seqnum;
+			so->ackseq= tcpheader->seqnum;
+			so->adwindow = tcpheader->adwindow;
+
 			tcphdr *third_grip = tcp_craft_handshake(3, so);
 			tcp_hton(third_grip);
-			v_write(so->id, (unsigned char *)third_grip, TCPHDRSIZE);
-			free(ipheader);
-			free(tcpheader);
+			v_write(so->id, (unsigned char *)third_grip, TCPHDRSIZE); 
 			free(third_grip);
+			free(tcpheader);
+			free(ipheader);
+			return;
 		}
 
 		//third grip & beyond
 		else {
-			if(so->state == ESTABLISHED){
-				printf("WINDOW SIDING TIME\n");
-			}
-			//conclude 3WH
-			else if (so->state == SYN_RCVD){
-				set_socketstate(so, ESTABLISHED);
-			} 
-			else{
-				printf("inappropriate state\n");
+			//if anything arrives beyond the thidr grip, ESTABLISHED
+			if(so->state == SYN_RCVD) set_socketstate(so, ESTABLISHED);
+
+			if(ACK(tcpheader->orf)){
+			} else {
 			}
 		}
+
+		return;
 	}
 }
 
@@ -392,6 +402,7 @@ void regular_update(int *updateTimer){
 	}
 
 	//TCP CONNECTION TIMEOUT FEATURE: if we're expecting packets
+	/*
 	if(expect){
 		socket_t *so, *temp;
 		expect = 0;
@@ -417,7 +428,7 @@ void regular_update(int *updateTimer){
 				}
 			}
 		}
-	}
+	} */
 }
 
 

@@ -129,63 +129,62 @@ int circular_buffer_write(circular_buffer_t *cbuf, const void *buf, size_t count
     }
     pthread_mutex_lock(&cbuf->pointer_lock);
     if (cbuf->eof) {
-	pthread_mutex_unlock(&cbuf->pointer_lock);
-	return 0;
+			pthread_mutex_unlock(&cbuf->pointer_lock);
+			return 0;
     }
 
     int ret = -1;
     // Loop until we manually break out (when some data is written) -- skip if count == 0
     while (count > 0) {
-	// If there is room to write some data, write as much as possible.
-	if (!circular_buffer_is_full(cbuf)) {
-	    // Determine exactly how much data we can write.
-	    uint16_t length_to_write = count;
-	    uint16_t available_capacity = circular_buffer_get_available_capacity(cbuf);
-	    if (length_to_write > available_capacity) {
-		length_to_write = available_capacity;
-	    }
+			// If there is room to write some data, write as much as possible.
+			if (!circular_buffer_is_full(cbuf)) {
+		    // Determine exactly how much data we can write.
+		    uint16_t length_to_write = count;
+		    uint16_t available_capacity = circular_buffer_get_available_capacity(cbuf);
+		    if (length_to_write > available_capacity) {
+					length_to_write = available_capacity;
+		    }
 	    
 #ifdef CIRCULAR_BUFFER_DEBUG
 	    printf("writing %d bytes of data (of %d passed in)\n", length_to_write, count);
 #endif
-	    // Calculate bytes to write before we wrap
-	    uint16_t bytes_until_wrap = circular_buffer_get_bytes_until_wrap(cbuf, cbuf->write_pointer);
+	  	  // Calculate bytes to write before we wrap
+	  	  uint16_t bytes_until_wrap = circular_buffer_get_bytes_until_wrap(cbuf, cbuf->write_pointer);
 	    
-	    // Don't wrap if we dont have to
-	    if (bytes_until_wrap > length_to_write) {
-		memcpy(cbuf->write_pointer, buf, length_to_write);
-		cbuf->write_pointer += length_to_write;    
-	    } else {
-		// Copy all bytes that will fit before wrap.
-		memcpy(cbuf->write_pointer, buf, bytes_until_wrap);
+		    // Don't wrap if we dont have to
+		    if (bytes_until_wrap > length_to_write) {
+					memcpy(cbuf->write_pointer, buf, length_to_write);
+					cbuf->write_pointer += length_to_write;    
+		    } else {
+					// Copy all bytes that will fit before wrap.
+					memcpy(cbuf->write_pointer, buf, bytes_until_wrap);
+					// Copy remaining bytes after we wrap (from beginning).
+					memcpy(cbuf->data, buf + bytes_until_wrap, length_to_write - bytes_until_wrap);
 		
-		// Copy remaining bytes after we wrap (from beginning).
-		memcpy(cbuf->data, buf + bytes_until_wrap, length_to_write - bytes_until_wrap);
-		
-		// Update pointer
-		cbuf->write_pointer = cbuf->data + (length_to_write - bytes_until_wrap);
-	    }
+					// Update pointer
+					cbuf->write_pointer = cbuf->data + (length_to_write - bytes_until_wrap);
+	   		}
 	    
-	    // Update size, set return value, and wake up someone waiting to read the data.
-	    cbuf->size += length_to_write;
-	    ret = length_to_write;
-	    pthread_cond_signal(&cbuf->cond_read);
-	    break;
-	} else {
+	 	   // Update size, set return value, and wake up someone waiting to read the data.
+	 	   cbuf->size += length_to_write;
+	 	   ret = length_to_write;
+	 	   pthread_cond_signal(&cbuf->cond_read);
+	 	   break;
+		} else {
 #ifdef CIRCULAR_BUFFER_DEBUG
 	    printf("Circular buffer sleeping as there is no room to write right now!\n");
 #endif
 	    // Sleep until room is available to write
 	    pthread_cond_wait(&cbuf->cond_write, &cbuf->pointer_lock);
-	}
-    }
+		}
+  }
     
 #ifdef CIRCULAR_BUFFER_DEBUG
-    circular_buffer_print_contents(cbuf);
+  circular_buffer_print_contents(cbuf);
 #endif
     
-    pthread_mutex_unlock(&cbuf->pointer_lock);
-    return ret;
+  pthread_mutex_unlock(&cbuf->pointer_lock);
+  return ret;
 }
 
 int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)

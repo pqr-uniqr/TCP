@@ -12,8 +12,12 @@ typedef struct socket{
 
 	uint32_t myaddr;
 	uint32_t myseq;
-	uint32_t urseq;
+	uint32_t ackseq;
+	uint32_t adwindow;
+
 	bqueue_t *q;
+	CBT *recvw;
+	CBT *sendw;
 
 	//state representation and timeout counter
 	int state;

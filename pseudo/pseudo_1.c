@@ -2,16 +2,17 @@ PSEUDOCODE for TCP - Connection Establishment
 
 
 [TODOS & NOTES]
+do free tcpheader and ipheader in tcp_handler (goto didn't work for some reason)
 
 do connection timeout feature
 	*list.c has no deletion feature !!! do this
 	*uses a fake int counter: change that to a real time_t timer
 	*UTHASH has no support for HASH_DEL on hh1 and hh2 ->temporary solution:
 			-add attribute to socket_t that represents deleted state
+	*maybe just set the state to CLOSED?
 
-do determine MAXSEQ
-
-do debug compiler mode
+do send RST if no one is listening on the port
+	->for now, I just send back a packet with nothing but RST set
 
 do when to calculate checksum? "DELAYED: NOT A BLOCKING ISSUE"
 	*when do we need to calculate checksum? whenever we send something

@@ -322,7 +322,7 @@ void recv_cmd(const char *line){
   printf("v_read() on %zu bytes returned %d; contents of buffer: '%s'\n",
          bytes_requested, bytes_read, buffer);
 
-cleanup:
+	cleanup:
   free(buffer);
   return;
 }

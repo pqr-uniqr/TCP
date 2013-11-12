@@ -3,7 +3,7 @@
  *
  *       Filename:  v_api.c
  *
- *    Description:  v_* type UNIX-like Transport layer API function calls
+ *    Description:  UNIX-like Transport layer API function calls
  *
  *        Version:  1.0
  *        Created:  11/05/2013 02:25:43 PM
@@ -23,8 +23,12 @@ int v_socket(){
 	if(so == NULL) return -1; //"malloc failed"
 	memset(so,0,sizeof(socket_t));
 	so->id = maxsockfd++;
-	so->q = malloc(sizeof(bqueue_t));
+	so->q= malloc(sizeof(bqueue_t));
+	so->sendw = malloc(sizeof(CBT));
+	so->recvw = malloc(sizeof(CBT));
 	bqueue_init(so->q);
+	CB_INIT(so->recvw, MAXSEQ);
+	CB_INIT(so->sendw, MAXSEQ);
 	HASH_ADD(hh1, fd_list, id, sizeof(int), so);
 	return so->id;
 }
@@ -66,12 +70,15 @@ int v_accept(int socket, struct in_addr *node){
 	memcpy(&(nso->uraddr), request+TCPHDRSIZE, SIZE32);
 	memcpy(&(nso->myaddr), request+TCPHDRSIZE+SIZE32, SIZE32);
 	nso->urport = ((tcphdr *)request)->sourceport;
-	nso->urseq = ((tcphdr *)request)->seqnum; //leave increments to sending funcs
+	nso->ackseq= ((tcphdr *)request)->seqnum; //leave increments to sending funcs
 	nso->myseq = rand() %MAXSEQ;
 	set_socketstate(nso, SYN_RCVD);
+	nso->adwindow = ((tcphdr*)request)->adwindow;
 
 	HASH_ADD(hh2, socket_table, urport, keylen, nso);
 	free(request);
+
+	//TODO start a thread that runs sliding window protocol
 
 	//if caller wants request origin
 	if(node!=NULL) node->s_addr = nso->uraddr;
@@ -80,7 +87,8 @@ int v_accept(int socket, struct in_addr *node){
 	tcphdr *second_grip = tcp_craft_handshake(2, nso);
 	tcp_hton(second_grip);
 	//TODO calculate checksum
-	int ret = v_write(s, (unsigned char *) second_grip, TCPHDRSIZE);
+	int ret = v_write(s, (unsigned char *) second_grip, TCPHDRSIZE); //TODO
+	printf("sent\n");
 	if(ret == -1) return -1; //"v_write failed"
 	free(second_grip);
 
@@ -113,7 +121,7 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	struct tcphdr *first_grip = tcp_craft_handshake(1, so);
 	tcp_hton(first_grip);
 	//TODO claculate checksum
-	int write_ret = v_write(socket, (unsigned char *)first_grip, TCPHDRSIZE);
+	int write_ret = v_write(socket, (unsigned char *)first_grip, TCPHDRSIZE);//TODO
 	free(first_grip);
 	if(write_ret == -1) return -1; //"v_write failed"
 	return 0;
@@ -127,6 +135,7 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	//get nexthop
 	socket_t *so = fd_lookup(socket);
 	interface_t *nexthop = get_nexthop(so->uraddr);
+	//TODO error checking?
 
 	//put in ip and send it
 	char *packet = malloc(nbyte+IPHDRSIZE);

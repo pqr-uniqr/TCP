@@ -16,16 +16,10 @@ void print_interfaces();
 void print_routes();
 void print_help();
 
-//cmd functions
+//cmd functions (subset-ed to TCP specific commands)
 void accept_cmd(const char *line);
 void connect_cmd(const char *line);
 /*  
-void help_cmd(const char *line);
-void interfaces_cmd(const char *line);
-void routes_cmd(const char *line);
-void sockets_cmd(const char *line);
-void down_cmd(const char *line);
-void up_cmd(const char *line);
 void send_cmd(const char *line);
 void recv_cmd(const char *line);
 void sendfile_cmd(const char *line);
