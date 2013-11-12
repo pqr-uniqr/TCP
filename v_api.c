@@ -53,6 +53,7 @@ int v_listen(int socket){
 	return 0;
 }
 
+
 int v_accept(int socket, struct in_addr *node){
 	socket_t *nso, *lso = fd_lookup(socket); //nso -> new socket, lso -> listening socket
 	struct in_addr anyaddr;
@@ -139,7 +140,8 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 
 	//put in ip and send it
 	char *packet = malloc(nbyte+IPHDRSIZE);
-	encapsulate_inip(so->myaddr, so->uraddr, TCP, (void *) buf, nbyte, &packet);
+	encapsulate_inip(so->myaddr, so->uraddr, (uint8_t)TCP, (void *) buf, nbyte, &packet);
+	free(packet);
 	return send_ip(nexthop, packet, nbyte+IPHDRSIZE);
 }
 

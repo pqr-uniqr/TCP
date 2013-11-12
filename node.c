@@ -207,6 +207,7 @@ int main ( int argc, char *argv[]) {
 void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 	struct iphdr *ipheader = malloc(sizeof(struct iphdr));
 	(void)decapsulate_fromip(packet, &ipheader);
+	
 	tcphdr *tcpheader = (tcphdr *) malloc(TCPHDRSIZE);
 	memcpy(tcpheader, packet+IPHDRSIZE, TCPHDRSIZE);
 	tcp_ntoh(tcpheader);
