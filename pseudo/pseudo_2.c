@@ -55,7 +55,6 @@ What can we assume beyond this point?
 		sendwindow and recvwindow with all the pointers pointing to the 
 		initial sequence number byte
 		
-
 on A: user types in "send socknum, data"
 		send_cmd(const char *line)
 			ret = sscanf(line, "send %d %n", &socket, &num_consumed)
@@ -175,14 +174,13 @@ Silly Window Syndrome
 
 
 
-[Sliding Window, related constraints and agents]
 
 [TODOS & NOTES] # <-this means it's done do <- this means it's not
 
 -why it's impossible to merge packet handler thread and socket thread
 	->because someone has to demux the incoming packets
 
-??? HOW DO YOU STORE GAPPED DATA IN CB ???
+??? HOW DO YOU STORE GAPPED DATA IN CB ??? --> not necessary for milestone II
 
 do we need a generic send() function that will be used by:
 	the sending window thread
@@ -191,13 +189,9 @@ do we need a generic send() function that will be used by:
 	tcp_craft_handshake() ("after extension")
 
 do window_t
-	init function
-		sendw->lba=0
-		sendw->lbs=0
-		sendw->lbw=0
-		recvw->lbr=0
-		recvw->lbc=0
-		recvw->nbe=1
+	write the definition
+	initialize it inside sockets 
+		//this is actually wrong->we're not talking about sequence numbers here
 
 do correspondence between void * to CB (physical seqnum) & sequence numbers (logical seqnum)
 	#who moves together? 
@@ -312,10 +306,20 @@ $macro definition
 
 
 $struct definition
-	struct window_t:
+	//this struct is temporary
+	struct swindow_t:
 		CBT *buf
-		void *lbw
+		void *lbw //last byte written
+		void *lbs //last byte sent
+		void *lba //last byte acknowledged
+		pthread_mutex_t lock
 
+	struct rwindow_t:
+		CBT *buf
+		void *lbc //last byte received
+		void *nbe //next byte expected
+		void *lbr //last byte read
+		pthread_mutex_t lock
 	struct socket_t: --FILE:now in socket_table.h
 		int id
 		uint16_t urport
@@ -383,17 +387,29 @@ $function definition
 	*void buf_mgmt_func(void *arg) --FILE: v_api.c
 		int s, ret
 		void *dqd 
-		
 		s = (int) arg;
-		socket_t *so = fd_lookup(s);
+		socket_t *so = fd_lookup(s)
+		swindow_t *sw = so->sendw
 		while(1):
-				//TODO Nagle's algorithm on sending window
-				//TODO retransmission concerns
-				//TODO reack concerns
+			pthread_mutex_lock(sw->lock)
+			//TODO Nagle's algorithm on sending window
+			if(sw->lbw != sw->lbs)
+				"
+			//TODO retransmission concerns
 				
 	*int v_write(int socket, const unsigned char *buf, uint32_t nbyte) --FILE: v_api.c
-		//TODO write in the buffer as much as there is space
-		//and return 
+		//this is probably final
+		socket_t *so = fd_lookup(socket) //valid
+		swindow_t *sw = so->sendw //valid
+		TH_LOCK(sw->lock) //valid
+		if(CB_FULL(sw->buf)) //valid 
+			return
+		cap = CB_GETCAP(sw->buf) //valid
+		ret = CB_WRITE(sw->buf, data, MIN(cap, nbyte)) //valid
+		sw->lbw = sw->lbw+ret //TEMPORARY (to be replaced by API call on CB extension)
+		TH_ULOCK(sw->lock) //valid
+		return ret
+
 	
 	*int v_read(int socket, unsigned char *buf, uint32_t nbyte) --FILE: v_api.c
 		
