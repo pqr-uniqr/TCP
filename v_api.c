@@ -24,11 +24,8 @@ int v_socket(){
 	memset(so,0,sizeof(socket_t));
 	so->id = maxsockfd++;
 	so->q= malloc(sizeof(bqueue_t));
-	so->sendw = malloc(sizeof(CBT));
-	so->recvw = malloc(sizeof(CBT));
+
 	bqueue_init(so->q);
-	CB_INIT(so->recvw, MAXSEQ);
-	CB_INIT(so->sendw, MAXSEQ);
 	HASH_ADD(hh1, fd_list, id, sizeof(int), so);
 	return so->id;
 }
@@ -75,6 +72,14 @@ int v_accept(int socket, struct in_addr *node){
 	nso->myseq = rand() %MAXSEQ;
 	set_socketstate(nso, SYN_RCVD);
 	nso->adwindow = ((tcphdr*)request)->adwindow;
+	init_windows(nso);
+
+	//initiate buffer mamagement
+	pthread_t mgmt_thr;
+	pthread_attr_t thr_attr;
+	pthread_attr_init(&thr_attr);
+	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
+	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt , NULL);
 
 	HASH_ADD(hh2, socket_table, urport, keylen, nso);
 	free(request);
@@ -85,14 +90,7 @@ int v_accept(int socket, struct in_addr *node){
 	if(node!=NULL) node->s_addr = nso->uraddr;
 
 	//send respones (second grip)
-	tcphdr *second_grip = tcp_craft_handshake(2, nso);
-	tcp_hton(second_grip);
-	//TODO calculate checksum
-	int ret = v_write(s, (unsigned char *) second_grip, TCPHDRSIZE); //TODO
-	printf("sent\n");
-	if(ret == -1) return -1; //"v_write failed"
-	free(second_grip);
-
+	tcp_send_handshake(2, nso);
 	return s;
 }
 
@@ -114,37 +112,104 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	so->myaddr = i->sourcevip;
 	so->myseq = rand() % MAXSEQ;
 	set_socketstate(so, SYN_SENT);
+	init_windows(so);
+
+	//commence buffer management
+	pthread_t mgmt_thr;
+	pthread_attr_t thr_attr;
+	pthread_attr_init(&thr_attr);
+	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
+	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt , NULL);
 
 	//store it in the lookup table (urport, myport, uraddr)
 	HASH_ADD(hh2, socket_table, urport, keylen, so);
 
 	//send a connection request (first grip)
-	struct tcphdr *first_grip = tcp_craft_handshake(1, so);
-	tcp_hton(first_grip);
-	//TODO claculate checksum
-	int write_ret = v_write(socket, (unsigned char *)first_grip, TCPHDRSIZE);//TODO
-	free(first_grip);
-	if(write_ret == -1) return -1; //"v_write failed"
+	tcp_send_handshake(1, so);
 	return 0;
 }
 
 
+void init_windows(socket_t *so){
+	so->sendw = malloc(sizeof(sendw_t));
+	so->recvw = malloc(sizeof(recvw_t));
+	CB_INIT(&so->sendw->buf, MAXSEQ*2);
+	CB_INIT(&so->recvw->buf, MAXSEQ*2);
+	unsigned char *send_start = so->sendw->buf->write_pointer;
+	unsigned char *recv_start = so->recvw->buf->write_pointer;
+	so->sendw->lbw = send_start;
+	so->sendw->lbs = send_start;
+	so->sendw->lba = send_start;
+
+	so->recvw->lbc = recv_start;
+	so->recvw->nbe = recv_start + 1;
+	so->recvw->lbr = recv_start;
+	printf("%d - %d = %d \n", so->recvw->nbe,so->recvw->lbr, (int)so->recvw->nbe - (int)so->recvw->lbr);
+	return;
+}
+
 int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
-	//MTU check (might be redundant)
-	if(nbyte+IPHDRSIZE > MTU) return -1;
-
-	//get nexthop
 	socket_t *so = fd_lookup(socket);
-	interface_t *nexthop = get_nexthop(so->uraddr);
-	//TODO error checking?
-
-	//put in ip and send it
-	char *packet = malloc(nbyte+IPHDRSIZE);
-	encapsulate_inip(so->myaddr, so->uraddr, (uint8_t)TCP, (void *) buf, nbyte, &packet);
-	free(packet);
-	return send_ip(nexthop, packet, nbyte+IPHDRSIZE);
+	if(CB_FULL(so->sendw->buf)) return 0; //"no write possible"
+	int cap = CB_GETCAP(so->sendw->buf);
+	int ret = CB_WRITE(so->sendw->buf, buf, MIN(cap, nbyte));
+	so->sendw->lbw = so->sendw->lbw + ret;
+	return ret;
 }
 
 
 
+
+
+int v_read(int socket, unsigned char *buf, uint32_t nbyte){
+	socket_t *so = fd_lookup(socket);
+	recvw_t *recvw = so->recvw;
+	printf("%d bytes available for read\n", (recvw->nbe) - (recvw->lbr) -1);
+	int toread = MIN(nbyte, (recvw->nbe) - (recvw->lbr) - 1);
+	recvw->lbr += toread;
+	return CB_READ(recvw, buf, toread);
+}
+
+
+
+void tcp_send_handshake(int gripnum, socket_t *socket){
+	tcphdr *header;
+	switch(gripnum){
+		case 0:
+			//RST
+			header = tcp_mastercrafter(0, 0,
+									0, 0,
+									0,0,1,0,0,
+									0);
+			break;
+		case 1 :
+			//first grip of 3WH
+			header = tcp_mastercrafter(socket->myport, socket->urport,
+									socket->myseq, 0,
+									0,1,0,0,0,
+									MAXSEQ);
+			break;
+		case 2 :
+			//second of 3WH
+			header =  tcp_mastercrafter(socket->myport, socket->urport,
+									socket->myseq, ++(socket->ackseq),
+									0,1,0,0,1,
+									MAXSEQ);
+			break;
+		case 3 :
+			//third of 3WH
+			header =  tcp_mastercrafter(socket->myport, socket->urport,
+									++(socket->myseq), ++(socket->ackseq),
+									0,0,0,0,1,
+									MAXSEQ);
+	}
+	//send the packet
+	tcp_hton(header);
+	interface_t *nexthop = get_nexthop(socket->uraddr);
+	char *packet = malloc(IPHDRSIZE+TCPHDRSIZE);
+	encapsulate_inip(socket->myaddr,socket->uraddr,(uint8_t)TCP,(void *)header, TCPHDRSIZE, &packet);
+	send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
+	return;
+
+}
 

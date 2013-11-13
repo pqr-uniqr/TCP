@@ -56,13 +56,20 @@
 #define REFRESH_TIME	15
 
 //TCP macros
+#define MSS 1400
 #define MAXPORT 65535 
 #define MAXSEQ 65535 
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
 #define CBT circular_buffer_t
 #define CB_INIT circular_buffer_init
-
+#define CB_GETCAP circular_buffer_get_available_capacity
+#define CB_FULL circular_buffer_is_full
+#define CB_WRITE circular_buffer_write
+#define CB_READ circular_buffer_read
+#define CB_EMPTY circular_buffer_is_empty
+#define CB_SIZE circular_buffer_get_size
+#define MIN(a,b) a>b? b:a
 //TCP state machine macros
 #define LISTENING 0
 #define SYN_SENT 1

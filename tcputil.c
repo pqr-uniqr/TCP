@@ -88,46 +88,5 @@ void tcp_print_packet(tcphdr *header){
 }
 
 
-tcphdr *tcp_craft_handshake(int gripnum, socket_t *socket){
-	switch(gripnum){
-		case 0:
-			//RST
-			return tcp_mastercrafter(0, 0,
-									0, 0,
-									0,0,1,0,0,
-									0);
-		case 1 :
-			//first grip of 3WH
-			return tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, 0,
-									0,1,0,0,0,
-									MAXSEQ);
-		case 2 :
-			//second of 3WH
-			return tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, socket->ackseq,
-									0,1,0,0,1,
-									MAXSEQ);
-		case 3 :
-			//third of 3WH
-			return tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, socket->ackseq,
-									0,0,0,0,1,
-									MAXSEQ);
-	}
-	return NULL;
-}
-
-
-
-
-
-
-
-
-
-
-
-
 
 

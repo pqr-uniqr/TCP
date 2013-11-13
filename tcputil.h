@@ -1,5 +1,5 @@
 #include "common.h"
-#include "socket_table.h"
+#include "interface.h"
 
 typedef struct tcphdr{
 	uint16_t sourceport;
@@ -41,4 +41,3 @@ tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
 			bool fin, bool syn, bool rst, bool psh, bool ack,
 			uint16_t adwindow);
 void tcp_print_packet(tcphdr *header);
-tcphdr *tcp_craft_handshake(int gripnum, socket_t *socket);

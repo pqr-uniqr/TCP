@@ -1,5 +1,7 @@
 #include "common.h"
-#include "interface.h"
+#include "srwindow.h"
+
+
 
 typedef struct socket{
 	//lookup key for handle hh1
@@ -16,12 +18,11 @@ typedef struct socket{
 	uint32_t adwindow;
 
 	bqueue_t *q;
-	CBT *recvw;
-	CBT *sendw;
-
-	//state representation and timeout counter
+	sendw_t *sendw;
+	recvw_t *recvw;
+	//state representation 
 	int state;
-	int timer;
+	int timer; //TODO PROBABLY WON'T GO HERE
 
 	UT_hash_handle hh1; //hashed by id (fd number)
 	UT_hash_handle hh2; //hashed by compound key {urport,myport,uraddr} --order matters
@@ -58,3 +59,8 @@ sockets_on_port *get_sockets_on_port(uint16_t port);
 void print_sockets();
 void print_socket(socket_t *sock);
 void set_socketstate(socket_t *so, int state);
+void socket_flush(socket_t *so);
+void send_tcp(socket_t *so, char *tcppacket, int size);
+tcphdr *tcp_craft_ack(socket_t *so);
+void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet);
+void buf_mgmt(void *arg);

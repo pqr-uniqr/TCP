@@ -33,7 +33,6 @@ socket_t *fd_lookup(int fdnumber){
 	return sock;
 }
 
-
 sockets_on_port *get_sockets_on_port(uint16_t port){
 	sockets_on_port *sop;
 	HASH_FIND(hh, sockets_by_port, &port, sizeof(uint16_t), sop);
@@ -51,6 +50,7 @@ sockets_on_port *get_sockets_on_port(uint16_t port){
 	return sop;
 }
 
+/*
 int destroy_socket(int socket){
 	//find the socket
 	socket_t *so = fd_lookup(socket);
@@ -58,7 +58,7 @@ int destroy_socket(int socket){
 	HASH_DELETE(hh1, fd_list, so);
 	HASH_DELETE(hh2, socket_table, so);
 
-	/*  
+	
 	socket_t *s, *tmp;
 	HASH_ITER(hh1, fd_list, s,tmp){
 		if(so->id == s->id) HASH_DEL(fd_list, s);
@@ -77,12 +77,12 @@ int destroy_socket(int socket){
 		if( ((socket_t *)curr->data)->id == so->id){
 			curr->data = NULL;
 		}
-	} */
+	} 
 	printf("free?\n");
 	free(so);
 
 }
-
+*/
 void print_sockets(){
 	socket_t *sock, *temp;
 	HASH_ITER(hh1, fd_list, sock, temp){
@@ -101,6 +101,7 @@ void print_socket(socket_t *s){
 }
 
 void set_socketstate(socket_t *so, int state){
+
 	int prevstate = so->state;
 	so->state = state;
 	if(state == SYN_SENT || state == SYN_RCVD){
@@ -114,7 +115,70 @@ void set_socketstate(socket_t *so, int state){
 
 
 
+void socket_flush(socket_t *so){
+	sendw_t *sendw = so->sendw;
+	int tosend;
+	while(!CB_EMPTY(sendw->buf)){
+		tosend = MIN(MSS, CB_SIZE(sendw->buf));
+		unsigned char *payload = malloc(tosend);
+		CB_READ(sendw->buf, payload, tosend);
+		char *tcppacket = malloc(TCPHDRSIZE+tosend);
+		so->myseq+=tosend;	
+		encapsulate_intcp(so, payload, tosend, tcppacket);
+		free(payload);
+		send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
+		free(tcppacket);
+		sendw->lbs+=tosend;
+	}	
+}
 
 
+void send_tcp(socket_t *so, char *tcppacket, int size){
+	interface_t *nexthop = get_nexthop(so->uraddr);
+	char *packet = malloc(IPHDRSIZE + size);
+	encapsulate_inip(so->myaddr, so->uraddr, (uint8_t)TCP, (void *) tcppacket, size, &packet);
+	send_ip(nexthop, packet, IPHDRSIZE+size);
+	return;
+}
+
+tcphdr *tcp_craft_ack(socket_t *so){
+	return tcp_mastercrafter(so->myport, so->urport,
+		0,so->ackseq,
+		0,0,0,0,1,
+		so->adwindow);
+}
+
+
+void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet){
+	tcphdr *header = tcp_mastercrafter(so->myport, so->urport,
+			so->myseq, 0,
+			0,0,0,0,0,
+			so->adwindow);
+	memcpy(packet, header, TCPHDRSIZE);
+	memcpy(packet+TCPHDRSIZE, data, datasize);
+	return;
+}
+
+
+void buf_mgmt(void *arg){
+
+	int s=(int)arg;
+	socket_t *so = fd_lookup(s);
+	sendw_t *sendw = so->sendw;
+	int unsent_bytes, unacked_bytes;
+	while(1){
+		if(!so->adwindow)	continue; //receiver window closed--probe
+		unsent_bytes = sendw->lbw - sendw->lbs;
+		unacked_bytes = sendw->lbw - sendw->lba;
+		if(!unsent_bytes) continue;//everything sent--retransmission is the only concern
+
+		if((unsent_bytes >= MSS) && ((so->adwindow) >=MSS)){
+			socket_flush(so);
+		}
+		if( !unsent_bytes && (so->adwindow >= unacked_bytes)){
+			socket_flush(so);
+		}
+	}
+}
 
 

@@ -1,5 +1,20 @@
 PSEUDOCODE for TCP - Sliding Window
 
+[new TODOs and NOTES]
+PRINCIPLE: Whenever possible, don't pass malloc-ed data down or up
+
+#: put packet handler as a seprarate thread (detach that shit)
+			-> this will allow for blocking commands to run
+
+#: put scenario 1 in place
+	#1 - MACROS 
+	#2 - STRUCTS
+	#3 - SETUP
+	#4 - FUNCTIONS
+
+
+DO: pointer math must be done with pointers cast to int
+
 
 [Scenario 1-3WH & perfect world transmission]
 A <----> B 
@@ -15,7 +30,11 @@ on A: "connect 73 2013"
 	v_bind(random local port)
 	v_connect(socket, addr, port)
 		*populate socket_t information
-		"send the first grip"
+		send the first grip
+		"set up sending and receiving window"
+			1 - malloc space for sending and receiving window
+			2 - initialize circular buffers
+			3 - set up pointers for both windows (REMEMBER, NBE is +1!!)
 		"pthread_create(buf_mgmt_func)"  //initiates buffer management thread
 
 on B: *receives first grip
@@ -30,15 +49,16 @@ on B: *receives first grip
 		v_bind()
 		*populate socket_t info
 		set_socketstate(nso, SYN_RCVD)
+		"set up sending and receiving window"
 		"pthread_create(&thread_id, &attribute, buf_mgmt_func, (void *)s)"  //buffer mgmt thread
-		"send the second grip"
+		send the second grip
 
 on A: *receives second grip
 		tcp_handler()
 			*socket lookup
 			set to ESTABLISHED
 			if(second grip)
-				"send the third grip"
+				send the third grip
 				
 on B: *receives third grip
 		tcp_handler()
@@ -57,48 +77,102 @@ What can we assume beyond this point?
 		
 on A: user types in "send socknum, data"
 		send_cmd(const char *line)
-			ret = sscanf(line, "send %d %n", &socket, &num_consumed)
-			data = line + num_consumed
-			ret = "v_write(socket, data, strlen(data)-1)"
+			const char *data: is the pointer to the data
+			int num_consumed: is the number of bytes user put in for send
+				what happens if this doesn't match the exact length of the data?
+					1-if num_consumed > strlen(data):
+							send strlen(data) bytes
+					2-if num_consumed < strlen(data):
+							send num_consumed  bytes
+					--> basically, send MIN(num_consumed, strlen(data))
+
+			now call "v_write(socket, data, strlen(data)-1)":
+				what does this do? v_write does not always write everything
+				v_write is a non-blocking function that writes as much as
+				space allows and returns
+
+				//get socket
 				socket_t *so = fd_lookup(socket)
-				TH_LOCK(so->sendw->lock)
 				//is there space?
 				if(CB_FULL(so->sendw->buf))
-					return //buffer full, no write possible
+					return //buffer full, no write possible, return 0
 				//how much space?
 				cap = CB_GETCAP(so->sendw->buf)
 				//write as much as possible
 				ret = CB_WRITE(so->sendw->buf, data, MIN(capacity,num_consumed))
 				//update last byte written
-				so->sendw->lbw = so->sendw->lbw + ret;
-				TH_ULOCK(so->sendw->lock)
+				so->sendw->lbw = so->sendw->lbw + ret
 				return ret
 					
 on A: thread running buf_mgmt_func() reads the buffer and decides to flush
-		//SENDER: nagle's algorithm
-		//TODO SENDER: if window of 0 is advertised, periodically send probe with 1 byte of data
-		//retransmission
+		What does this thread do?
+		1- It uses nagle's algorithm to decide when to send + adwindow availability
+		2- if adwindow is set to 0, this thread sends probe packet "every second"
+		3- if some sent data is not acked for more than "timeout", retransmits it
+		4- for every ACK received, it calculates RTT and uses it to maintain reasonable timeout
+		CONCERNS:
+			1- circular buffer already has a lock-buf if we want to keep our own set of pointers,
+			we probably do want to lock this
+			2- it might not be a bad idea to put adwindow inside sending window, and current
+			sequence number (that we are expecting) inside the receveiving window
+
+		//setup
 		s = (int) arg
 		socket_t *so = fd_lookup(s)
-		window_t *sendw = so->sendw
-		window_t *recvw = so->recv
-
+		sendw_t *sendw = so->sendw
+		int unsent_bytes, unacked_bytes
+		//get to werk
 		while(1)
-			pthread_mutex_lock(sendw->lock)
-			//NAGLE--Flush or not?
-			if(sendw->lbw != sendw->lbs)
+			if(!so->adwindow){
+				//adwindow is 0 -- run the timer or set up timer for probe packets
+				continue;
+			}
+			//do we have data to send?
+			unsent_bytes = sendw->lbw - sendw->lbs
+			unacked_bytes = sendw->lbw - sendw->lba
+
+			if(unsent_bytes)
 				//TODO wraparound
-				if(((sendw->lbw-sendw->lbs) >= MSS) && ((sendw->adwindow) >= MSS))
-					"buf_flush(sendw->buf, so)"
-				else if(sendw->lba == sendw->lbs)
-					"buf_flush(sendw->buf, so)"  restrict 
+				if((unsent_bytes >= MSS) && ((sendw->adwindow) >= MSS))
+					buf_flush(so);
+				else if(!unacked_bytes && sendw->adwindow >= unacked_bytes)
+					buf_flush(so);
+					"buf_flush(socket_t *so)"
+						We need to send out everything in the sending window: What do we do?
+							1-loop through in chunks of MSS, package data inside TCP header
+							2-send it away using send_tcp()
+							3-update last byte sent
+							4-?? WHAT IF GAP?
+							sendw_t *sendw = so->sendw
+							int tosend
+							while(!CB_EMPTY(sendw->buf))
+								tosend = MIN(MSS, CB_SIZE(sendw->buf))
+								void *payload = malloc(tosend)
+								CB_READ(sendw->buf, payload, tosend)
+								char *tcppacket = malloc(TCPHDRSIZE+tosend)
+								so->seqnum+=tosend
+								encapsulate_intcp(so, payload, tosend, tcppacket)
+								"encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet)"
+									tcphdr *header = tcp_mastercrafter(so->myport,so->urport,
+										so->seqnum,0,
+										0,0,0,0,0,
+										so->adwindow)
+									memcpy(packet, header, TCPHDRSIZE)
+									memcpy(packet+TCPHDRSIZE, data, datasize)
+									return
+								free(payload)
+								send_tcp(so, tcppacket, tosend+TCPHDRSIZE)
+								free(tcppacket)
+								sendw->lbs+=tosend
+
 			//RETRANSMISSION--has the earliest unacked packet timed out?
+			/*
 			if(lba has been stagnant && lba < lbs)
 				last_inflight_lba_update =the time when this lba was originally set (with lba <lbs)
 				if(time() - last_inflight_lba_update > Timeout(in milliseconds))
 					DQ(so->retransmisssionq, segment)
 					char *packet ="encapsulate_tcpip(segment)"
-					send(so, packet)
+					send(so, packet) */
 
 on B: tcp_handler receives packet containing flushed data
 		tcp_handler()
@@ -111,60 +185,70 @@ on B: tcp_handler receives packet containing flushed data
 			else  ...
 				if(ACK)  ...
 				else restrict
-					//so we just got a data packet... what needs to be done?
-					//	buffer the data (or not)
-					//	update LBC
-					//	update NBE
-					//	update ack_seq (next sequence number to be ACKed)
-					//	update adwindow
-					//	send back ACK
-					window_t *rwin=so->recvw
-					THR_LOCK(rwin->lock)
-					int dsize=ipheader->tot_len-IPHDRSIZE-TCPHDRSIZE
+					So we just got a data packet: What do we do?
+						1-check if we can receive anything
+						2-check if this packet is "within our receiving range": for now, do nothing
+						3-check if this packet is in order VS out of order
+						4-buffer the data (CB_WRITE)
+						5-update LAST BYTE RECEIVED : MAX(currentLBC, newLBC)
+						6-update NEXT BYTE EXPECTED
+						7-update ackseq (next sequence number to be ACKed)
+						8-update adwindow : how much space do we have left in our recv buffer?
+						9-respond to the packet with an ACK (acknowledge NBE -1)
+					recvw_t *rwin=so->recvw
+					int payloadsize = ipheader->tot_len-IPHDRSIZE-TCPHDRSIZE
 
 					if(CB_FULL(rwin->buf)) //TODO abandon receiving (any other actions?)
-					if("is_outofrange(so, tcpheader->seqnum)")//TODO most likely a noop most of the tm
 					cap = CB_GETCAP(rwin->buf)  
 
 					//OBJECTIVE: write and update pointers correctly
-					if(tcpheader->seqnum == so->ackseq){
-						//in order
+					if(tcpheader->seqnum == so->ackseq):
+						//packet arrived in order!
 						ret = CB_WRITE(rwin->buf, tcpheader+TCPHDRSIZE, MIN(cap,dsize))
-						rwin->lbc = MAX(rwin->lbc, tcpheader->seqnum+dsize-1)
-						int inc = "inc_nbe_by(rwin)"
-						rwin->nbe += inc //TODO wraparound
-						so->ack_seq += inc //TODO wraparound
-						so->adwindow = so->adwindow - ((rwin->nbe-1)-rwin->lbr) //TODO wraparound
-					} else {
-						//TODO out of order: how to buffer this
-					}
 
-					//OBJECTIVE: trust the updated info in socket_t and ack based on it
-					"ack(so)"
-						tcphdr *ack = tcp_mastercrafter(so->myport,so->urport,
-								0, so->ackseq,
-								0,0,0,0,1,
-								so->adwindow) //make a wrapper for this function
+						//if no gap
+						if(rwin->lbc + 1 == rwin->nbe):
+							rwin->lbc += payloadsize -1
+							rwin->nbe = rwin->lbc + 1 
+							so->ackseq += payloadsize //TODO potential wraparound
+							so->adwindow -= ( (rwin->nbe - 1) - rwin->lbr) //TODO potential wraparound
+						else:
+							//TODO there is a gap
+					else:
+						//TODO out of order: how to buffer this
+
+					tcphdr *ack = "tcp_craft_ack(so)"
+						return  tcp_mastercrafter(so->myport, so->urport,
+							0, so->ackseq,
+							0,0,0,0,1,
+							so->adwindow);
+					send_tcp(so, ack, TCPHDRSIZE);
+					"send_tcp(socket_t so ,char *tcppacket, int size)"
 						interface_t *nexthop = get_nexthop(so->uraddr)
-						char *packet = malloc(TCPHDRSIZE+IPHDRSIZE)
-						encapsulate_inip(so->myaddr,so->uraddr,TCP,(void *)ack,TCPHDRSIZE,&packet)
-						send_ip(nexthop, packet,TCPHDRSIZRE+IPHDRSIZE)
-					THR_UNLOCK(rwin->lock)
+						char *packet = malloc(IPHDRSIZE+size)
+						encapsulate_inip(so->myaddr,so->uraddr,(uint8_t)TCP,(void *)tcppacket,size,&packet)
+						send_ip(nexthop, packet, IPHDRSIZE+size)
 		
 on B: "recv socknum, numbytes, n"
 		recv_cmd(const char *line)
-			//parse arguments
-			buffer = (char *)malloc(bytes_requested+1)
-			memset(buffer, '\0', bytes_requested+1)
-			bytes_read = v_read(socket, buffer, bytes_requested)
-				//read data from the receiving buffer 
-				socket_t *so = fd_lookup(socket)
-				TH_LOCK(so->recvw->lock)
-				int toread = MIN(bytes_requested, so->recvw->nbe-so->recvw->lbr) //TODO wraparound
-				so->recvw->lbr += toread;
-				TH_UNLOCK(so->recvw->lock)
-				return CB_READ(socket->recvw, buffer, toread)
+			
+			int socket: is the socket fd id
+			size_t bytes_requested: is number of bytes that user wants
+			int bytes_read: is number of bytes
+			char should_loop: 'y'--> read_all() (BLOCKS) 'n'-->read() (NO BLOCKS)
 
+
+			bytes_read = v_read(socket, buffer, bytes_requested)
+			"v_read(int socket, unsigned char *buf, uint32_t nbyte)"
+				The user wants to read numbytes bytes of data (if available) -- what do we do?
+					1-check if there's data available
+					2-read the data
+					3-update LAST BYTE READ
+				socket_t *so = fd_lookup(socket)
+				recvw_t *recvw = so->recvw
+				int toread = MIN(nbyte, (recvw->nbe) - (recvw->lbr) -1 ) 
+				recvw->lbr += toread
+				return CB_READ(socket->recvw, buffer, toread)
 
 [Side Scenarios]
 Packets out of order
@@ -172,107 +256,6 @@ Packets lost
 Sequence number wraparound
 Silly Window Syndrome
 
-
-
-
-[TODOS & NOTES] # <-this means it's done do <- this means it's not
-
--why it's impossible to merge packet handler thread and socket thread
-	->because someone has to demux the incoming packets
-
-??? HOW DO YOU STORE GAPPED DATA IN CB ??? --> not necessary for milestone II
-
-do we need a generic send() function that will be used by:
-	the sending window thread
-	buf_mgmt_func()
-	ack()
-	tcp_craft_handshake() ("after extension")
-
-do window_t
-	write the definition
-	initialize it inside sockets 
-		//this is actually wrong->we're not talking about sequence numbers here
-
-do correspondence between void * to CB (physical seqnum) & sequence numbers (logical seqnum)
-	#who moves together? 
-		[on RECEIVING WINDOW]
-		correspondence between NBE and ackseq
-		->algorithm to keep this correspondence:
-			whenever NBE is incremented by N:
-				increment ackseq by N
-
-		[on SENDING WINDOW]
-		correspondence between LBS and seqnum
-		->algorithm to keep LBS and seqnum:
-			after you send:
-				incremented LBS by payload sent
-
-	*how does logical wraparound and physical wraparound relate to each other?
-
--"TCP always responds to a data segment with an ACK":
-	with the "latest ACK number and Advertised window"
-	1- if nogap, this is natural, as every segment will call for an incremented ACK number
-	2- if gap, packets arriving out of order will fail to change NBE, and in turn seqnum.
-			on the sending side, these redundant "complaint ACKs" will be effectively ignored.
-
-#make scenarios that bring out different elements
-	*on the notepad
-
-do decouple packet receiving function from main()
-
-do extend tcp_craft_handshake() functions to take care of sending, too
-
-do make struct window with the pointers and helper functions
-
-do setup the pointers for newly initialized socket's windows
-
-do v_write should take in the data, not the packet
-	->which means that the v_write calls I've had so far were not really v_writes
-
-#sequence number has to be in bytes
-	-The principle: 
-			1-update ackseq number when you receive the packet (tcp_handler--active socket section)
-				ackseq = ackseq + size of the packet just received
-			2-update seqnum when you send a packet (on connection_thread)
-				myseq = myseq + size of the new packet
-	#change member variable name: urseq -> ackseq
-	!!!sequence number stays the same until the third grip arrives (incremented by the 
-	size of the data, not the packet)!!!
-
-do how to shoot down the connection/listening thread
-do move third grip up (potentially a performance improvement)
-do substitute the use of v_write() on handshake
-	why? because use of buffering to receiving buffer is restricted to data
-	and the initial packets have no data in them--they are just headers
-	so for nth grip, we should not be calling v_write on them
-	
-
-# put 2 circular buffers in socket_t 
-# use goto in tcp handler to make freeing easier
-# reflect change in socket_t (listening sockets will have sendq as NULL)
-#share window size info in v_write (starting window size 65535)
-	#add circular buffers to socket_t
-	#initialize it in v_socket with capacity of 65535
-	#make craft_handshake() send MAXSEQ 
-		*does 3WH preserve its behavior through sliding window?
-				for 3WH packets: ("this is assuming that v_write will call enqueue(sendqueue)")
-						A: first grip v_write -->
-								no data in flight -->flush right away! (creates ACK expectation)
-
-						B: first grip receive --listening socket
-								accept_thr_func -->reads right away (not even buffered)
-						B: second grip v_write -->done by accept_thr (creates ACK expectation)
-								no data in flight -->flush right away
-
-						A: second grip receive (handler takes care)
-								do thread ACK expectation must be met -->queue it in the sendqueue
-						A: third grip v_write 
-								no data in flight --> flush right away 
-	
-						B: third grip receive 
-								do thread ACK expectation must be met -->queue it in the sendqueue
-	#store adwindow
-	#queue it in the sendqueue
 
 
 [DEFINITIONS]
@@ -283,20 +266,21 @@ $macro definition
 	#define CB circular_buffer //shortens function calls for circular buffer
 	#define CB_INIT circular_buffer_init
 	#define CB_GETCAP circular_buffer_get_available_capacity
+	#define CB_SIZE circular_buffer_get_size
 	#define CB_FULL circular_buffer_is_full
 	#define CB_WRITE circular_buffer_write
 	#define CB_READ circular_buffer_read
+	#define CB_EMPTY circular_buffer_is_empty
+	#define MIN(a,b) a>b? b:a
+
 	#define TH_LOCK pthread_mutex_lock
 	#define TH_ULOCK pthread_mutex_unlock
 	#define NBDQ bqueue_trydequeue //non-blocking dequeue
-	#define MIN(a,b) a>b? b:a
 
-	//size macros --now in common.h
-	#define SIZE32 sizeof(uint32_t)
 
 	//program-wide macros --now in common.h
 	#define MAXPORT 65535//2^17-1
-	#define MAXSEQ  65535//TODO how to derive maximum sequence number
+	#define MAXSEQ 65535 //TODO how to derive maximum sequence number
 
 	//state machine macros --now in common.h
 	#define LISTENING 0
@@ -306,35 +290,36 @@ $macro definition
 
 
 $struct definition
-	//this struct is temporary
-	struct swindow_t:
+
+	struct sendw_t
 		CBT *buf
-		void *lbw //last byte written
-		void *lbs //last byte sent
-		void *lba //last byte acknowledged
+		unsigned char *lbw //last byte written
+		unsigned char *lbs //last byte sent
+		unsigned char *lba //last byte acknowledged
 		pthread_mutex_t lock
 
-	struct rwindow_t:
+	struct recvw_t
 		CBT *buf
-		void *lbc //last byte received
-		void *nbe //next byte expected
-		void *lbr //last byte read
+		unsigned char *lbc //last byte received
+		unsigned char *nbe //next byte expected
+		unsigned char *lbr //last byte read
 		pthread_mutex_t lock
+
 	struct socket_t: --FILE:now in socket_table.h
 		int id
 		uint16_t urport
 		uint16_t myport
 		uint32_t uraddr
-
 		uint32_t myaddr
 		uint32_t state
+
 		uint32_t myseq //for now, increment before crafting a new packet
 		uint32_t ackseq //sender assumes this is next sequence number expected
 		uint32_t adwindow //sender assumes this is (buffersize-amount of data ready to be read)
-
+											//on the receiver
 		bqueue_t *q //queue for the passive sockets
-		CB_t *sendw //Sending window
-		CB_t *recvw //Receiving window
+		sendw_t *sendw //Sending window
+		recvw_t *recvw //Receiving window
 
 		uthash_handle hh1 //lookup by fd
 		uthash_handle hh2 //lookup by urport myport uraddr
@@ -368,77 +353,29 @@ $Global Variable Definitions --FILE: main & socket_table
 	int maxsockfd = 0 //for sockfd assignment (assign)
 	unsigned keylen; //length of the lookup key
 		
-	
-
 $includes
 	#include <stddef.h> -- FILE: now in common.h
 
-
 $function definition 
-	*int ack(...)
-	*int inc_nbe_by(window_t *recvw) 
-		//start from the current NBE pointer
-		//count how many bytes of new contiguous data we have available
-		//return value of this function + NBE must be NBE
-	*buf_flush
-		//flush data
-		//put things in the retransmission queue
-
-	*void buf_mgmt_func(void *arg) --FILE: v_api.c
-		int s, ret
-		void *dqd 
-		s = (int) arg;
-		socket_t *so = fd_lookup(s)
-		swindow_t *sw = so->sendw
-		while(1):
-			pthread_mutex_lock(sw->lock)
-			//TODO Nagle's algorithm on sending window
-			if(sw->lbw != sw->lbs)
-				"
-			//TODO retransmission concerns
-				
 	*int v_write(int socket, const unsigned char *buf, uint32_t nbyte) --FILE: v_api.c
-		//this is probably final
-		socket_t *so = fd_lookup(socket) //valid
-		swindow_t *sw = so->sendw //valid
-		TH_LOCK(sw->lock) //valid
-		if(CB_FULL(sw->buf)) //valid 
-			return
-		cap = CB_GETCAP(sw->buf) //valid
-		ret = CB_WRITE(sw->buf, data, MIN(cap, nbyte)) //valid
-		sw->lbw = sw->lbw+ret //TEMPORARY (to be replaced by API call on CB extension)
-		TH_ULOCK(sw->lock) //valid
-		return ret
-
-	
+		socket_t *so = fd_lookup(socket);
+		if(CB_FULL(so->sendw->buf)) return 0; //"no write possible"
+		int cap = CB_GETCAP(so->sendw->buf);
+		int ret = CB_WRITE(so->sendw->buf, buf, MIN(cap, nbyte));
+		so->sendw->lbw = so->sendw->lbw + ret;
+		return ret;
+	*void buf_mgmt(void *arg) --FILE: srwindow
+		
+	*void buf_flush(socket_t *so) --FILE: srwindow
 	*int v_read(int socket, unsigned char *buf, uint32_t nbyte) --FILE: v_api.c
+
+	*void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet)--FILE: tcp_util
+	*int send_tcp(socket_t so, char *tcppacket, int size) --FILE: tcp_util
 		
 	#void send_cmd(const char *line) --FILE: node.c
 		*copy from TAnode
-		int socket is the socket number
-		const char *data is the data to be sent
-		ret = v_write(socket, data, strlen(data)-1)
-
 	#void recv_cmd(const char *line) --FILE: node.c
 		*copy from TAnode
-		int socket is the socket number
-		size_t bytes_requested is the number of bytes requested
-		char should_loop indicates whether we should call v_read_all() or v_read()
-		if(should_loop == 'n')
-			bytes_read = v_read(socket, buffer, bytes_requested)
-		if(should_loop == 'y')
-			bytes_read = v_read_all(socket, buffer, bytes_requested)
-				while(bytes_read < bytes_requested)
-					ret = v_read(s, buf+bytes_read, bytes_requested-bytes_read)
-					if(ret == -EAGAIN)
-						continue
-					if(ret < 0)
-						return ret //error?
-					if(ret == 0)
-						return bytes_read //
-					bytes_read += ret
-				return bytes_read
-
 	#void set_socketstate(socket_t *so, int state) --FILE: sockets_table
 	#void print_sockets() -- FILE: sockets_table
 	#void print_socket(socket_t *sock) --FILE: sockets_table
@@ -462,12 +399,9 @@ $function definition
 	*uint16_t tcp_checksum(uint32_t saddr, uint32_t daddr, int tcplen, char *packet)
 
 
-
-
 $Setup
 	time_t t
 	srand((unsigned) time(&t))
-
 
 
 $Event Loop: void tcp_handler(pack, inf, received_bytes)
@@ -520,4 +454,101 @@ $Event Loop: void tcp_handler(pack, inf, received_bytes)
 
 
 
+[TODOS & NOTES] # <-this means it's done do <- this means it's not
+
+-why it's impossible to merge packet handler thread and socket thread
+	->because someone has to demux the incoming packets
+
+??? HOW DO YOU STORE GAPPED DATA IN CB ??? 
+
+do we need a generic send() function that will be used by:
+	the sending window thread
+	buf_mgmt_func()
+	ack()
+	tcp_craft_handshake() ("after extension")
+
+*checksum field is actually not hton()-ed
+
+do correspondence between void * to CB (physical seqnum) & sequence numbers (logical seqnum)
+	#who moves together? 
+		[on RECEIVING WINDOW]
+		correspondence between NBE and ackseq
+		->algorithm to keep this correspondence:
+			whenever NBE is incremented by N:
+				increment ackseq by N
+
+		[on SENDING WINDOW]
+		correspondence between LBS and seqnum
+		->algorithm to keep LBS and seqnum:
+			after you send:
+				incremented LBS by payload sent
+
+	*how does logical wraparound and physical wraparound relate to each other?
+
+-"TCP always responds to a data segment with an ACK":
+	with the "latest ACK number and Advertised window"
+	1- if nogap, this is natural, as every segment will call for an incremented ACK number
+	2- if gap, packets arriving out of order will fail to change NBE, and in turn seqnum.
+			on the sending side, these redundant "complaint ACKs" will be effectively ignored.
+
+#make scenarios that bring out different elements
+	*on the notepad
+
+do decouple packet receiving function from main()
+
+do extend tcp_craft_handshake() functions to take care of sending, too
+
+do make struct window with the pointers and helper functions
+
+do setup the pointers for newly initialized socket's windows
+
+do v_write should take in the data, not the packet
+	->which means that the v_write calls I've had so far were not really v_writes
+
+do leave malloc for mastercrafter function up to the caller
+
+#sequence number has to be in bytes
+	-The principle: 
+			1-update ackseq number when you receive the packet (tcp_handler--active socket section)
+				ackseq = ackseq + size of the packet just received
+			2-update seqnum when you send a packet (on connection_thread)
+				myseq = myseq + size of the new packet
+	#change member variable name: urseq -> ackseq
+	!!!sequence number stays the same until the third grip arrives (incremented by the 
+	size of the data, not the packet)!!!
+
+do how to shoot down the connection/listening thread
+do move third grip up (potentially a performance improvement)
+do substitute the use of v_write() on handshake
+	why? because use of buffering to receiving buffer is restricted to data
+	and the initial packets have no data in them--they are just headers
+	so for nth grip, we should not be calling v_write on them
+	
+
+# put 2 circular buffers in socket_t 
+# use goto in tcp handler to make freeing easier
+# reflect change in socket_t (listening sockets will have sendq as NULL)
+#share window size info in v_write (starting window size 65535)
+	#add circular buffers to socket_t
+	#initialize it in v_socket with capacity of 65535
+	#make craft_handshake() send MAXSEQ 
+		*does 3WH preserve its behavior through sliding window?
+				for 3WH packets: ("this is assuming that v_write will call enqueue(sendqueue)")
+						A: first grip v_write -->
+								no data in flight -->flush right away! (creates ACK expectation)
+
+						B: first grip receive --listening socket
+								accept_thr_func -->reads right away (not even buffered)
+						B: second grip v_write -->done by accept_thr (creates ACK expectation)
+								no data in flight -->flush right away
+
+						A: second grip receive (handler takes care)
+								do thread ACK expectation must be met -->queue it in the sendqueue
+						A: third grip v_write 
+								no data in flight --> flush right away 
+	
+						B: third grip receive 
+								do thread ACK expectation must be met -->queue it in the sendqueue
+	#store adwindow
+	#queue it in the sendqueue
 

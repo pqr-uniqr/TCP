@@ -9,10 +9,11 @@ socket_t *fd_list; //hash table (id, socket)
 socket_t *socket_table; //hash table ({urport, myport, uraddr}, socket) 
 sockets_on_port *sockets_by_port;
 rtu_routing_entry *routing_table;
-fd_set masterfds;
+fd_set readfds, masterfds;
 int maxsockfd = 0, expect = 0;
 unsigned keylen = offsetof(socket_t, uraddr)
 	+sizeof(uint32_t) -offsetof(socket_t, urport); 
+time_t lastRIPupdate;
 
 
 struct {
@@ -35,11 +36,11 @@ struct {
 	{"routes", print_routes},
 	{"sockets", print_sockets},
 	{"down", down_interface},
-	{"up", up_interface}
-/*  
-   {"send", send_cmd},
-  {"recv", recv_cmd},
-  {"sendfile", sendfile_cmd},
+	{"up", up_interface}, 
+  {"send", send_cmd}, 
+  {"recv", recv_cmd}
+  /*
+	{"sendfile", sendfile_cmd},
   {"recvfile", recvfile_cmd},
   {"shutdown", shutdown_cmd},
   {"close", close_cmd} */
@@ -55,97 +56,43 @@ int main ( int argc, char *argv[]) {
 		exit(1);
 	}
 
-	struct timeval tv, tvcopy;
-	char readbuf[CMDBUFSIZE], recvbuf[RECVBUFSIZE], cmd[CMDBUFSIZE];
-	char *fgets_ret;
-	int received_bytes;
-	struct sockaddr sender_addr;
-	socklen_t addrlen= sizeof sender_addr;
-	struct iphdr *ipheader;
-	interface_t *i;
-	node_t *curr;
-	int updateTimer= 9;
-
+	//stays here
+	char readbuf[CMDBUFSIZE], cmd[CMDBUFSIZE];
+	char *fgets_ret; 
+	lastRIPupdate = time(NULL);
 	time_t t;
+	
 	srand((unsigned) time(&t));
-
-	fd_set readfds;
+	//FD_SET(0, &masterfds);
 	FD_ZERO(&readfds);
 	FD_ZERO(&masterfds);
-	FD_SET(0, &masterfds);
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
 	maxfd = 2;
+
 	if(setup_interface(argv[1]) == -1){
 		printf("ERROR : setup_interface failed\n");
 		exit(1);
 	}
+
 
 	if (rt_init() == -1) {
 		printf("ERROR : init_routing failed\n");
 		exit(1);
 	}
 
+	//create recv thrad TODO check errors and shit
+	pthread_t recv_thr;
+	pthread_attr_t thr_attr;
+	pthread_attr_init(&thr_attr);
+	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
+	pthread_create(&recv_thr, &thr_attr, recv_thr_func, NULL);
+
 	while(1){
 
 		//TODO these functions should be modified to count time
-		regular_update(&updateTimer);
+		regular_update(&lastRIPupdate);
 		decrement_ttl();
 
-		//
-		readfds = masterfds;
-		tvcopy = tv;
-
-		if(select(maxfd+1, &readfds, NULL, NULL, &tvcopy) == -1){
-			perror("select()");
-			exit(1);
-		}
-
-		for(curr = interfaces->head;curr!=NULL;curr=curr->next){
-
-			i = (interface_t *)curr->data;
-
-			if(FD_ISSET(i->sockfd, &readfds)){
-
-				if ((received_bytes = recvfrom(i->sockfd, recvbuf, RECVBUFSIZE, 0, &sender_addr, &addrlen)) == -1) {
-					perror("recvfrom()");
-					exit(1);
-				}
-
-				//this link is down
-				if(i->status==DOWN){continue;}
-
-				ipheader = (struct iphdr *)malloc(sizeof(struct iphdr));
-				uint32_t destaddr = decapsulate_fromip(recvbuf, &ipheader);
-
-				//it's for me!
-				if(id_address(destaddr)){
-					unsigned j;
-					for(j=0;j<sizeof(protocol_handlers) /sizeof(protocol_handlers[0]);j++){
-						if(ipheader->protocol == protocol_handlers[j].protocol){
-							protocol_handlers[j].handler(recvbuf, i, received_bytes);
-						}
-					}
-				}
-				//packet to be forwarded
-				else {
-					interface_t *inf;
-					inf = get_nexthop(ipheader->daddr);
-					char *packet = malloc(received_bytes);
-					memcpy(packet, recvbuf, received_bytes);
-					send_ip(inf, packet, received_bytes);
-					free(packet);
-				}
-
-				free(ipheader);
-			}
-		}
-
-
-
-		
 		//command line parsing
-		if(FD_ISSET(0, &readfds)){
 			unsigned k;
 			int ret;
 			(void)fflush(stdout);
@@ -169,24 +116,16 @@ int main ( int argc, char *argv[]) {
 				}
 			}
 
-
 			if(k == sizeof(cmd_table)/sizeof(cmd_table[0])){
 				fprintf(stderr, "no valid command specified\n");
 				continue;
 			}
 		}
-	}
 
 	printf("safe exiting\n");
 
 	//clean up memory before exiting
-	for(curr=interfaces->head;curr!=NULL;curr=curr->next){
-		interface_t *i = (interface_t *)curr->data;
-		close(i->sockfd);
-		free(i->sourceaddr);
-		free(i->destaddr);
-		free(i);
-	}
+
 
 	list_free(&interfaces);
 
@@ -214,7 +153,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 	tcp_print_packet(tcpheader);
 
-	//for first grip packet
+	//for first grip packet (SERVER)
 	if(SYN(tcpheader->orf) &&!ACK(tcpheader->orf)){
 		sockets_on_port *sop = get_sockets_on_port(tcpheader->destport);
 		if(sop->listening_socket== NULL){
@@ -256,7 +195,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 			return;
 		}
 
-		//second grip
+		//second grip (CLIENT)
 		if(SYN(tcpheader->orf) && ACK(tcpheader->orf)){
 			if(so->state != SYN_SENT){
 					//goto cleanup; //"packet inappropriate for current connection state"
@@ -265,10 +204,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 			so->ackseq= tcpheader->seqnum;
 			so->adwindow = tcpheader->adwindow;
 
-			tcphdr *third_grip = tcp_craft_handshake(3, so);
-			tcp_hton(third_grip);
-			v_write(so->id, (unsigned char *)third_grip, TCPHDRSIZE); 
-			free(third_grip);
+			tcp_send_handshake(3, so);
 			free(tcpheader);
 			free(ipheader);
 			return;
@@ -280,7 +216,34 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 			if(so->state == SYN_RCVD) set_socketstate(so, ESTABLISHED);
 
 			if(ACK(tcpheader->orf)){
+
 			} else {
+				//data packet received
+				recvw_t *rwin = so->recvw;
+				int payloadsize = ipheader->tot_len -IPHDRSIZE-TCPHDRSIZE;
+				if(CB_FULL(rwin->buf)) return; //not enough space to receive TODO memory
+				int cap = CB_GETCAP(rwin->buf);
+
+				//in order?
+				if(tcpheader->seqnum == so->ackseq){
+					int ret = CB_WRITE(rwin->buf, tcpheader+TCPHDRSIZE, MIN(cap, payloadsize));
+
+					//there is no gap--straightforward pointer update
+					if(rwin->lbc+1 == rwin->nbe){
+						rwin->lbc += payloadsize -1;
+						rwin->nbe = rwin->lbc + 1;
+						so->ackseq += payloadsize;
+						so->adwindow -= ( (rwin->nbe-1) - rwin->lbr);
+					} else{
+						//TODO there is a gap --pointer update
+					}
+				} else {
+						//TODO packet arrived out of order
+				}
+
+				//time to send ACK
+				tcphdr *ack =tcp_craft_ack(so);
+				send_tcp(so, ack, TCPHDRSIZE);
 			}
 		}
 
@@ -357,8 +320,6 @@ void accept_cmd(const char *line){
 
   return;
 }
-
-
 void connect_cmd(const char *line){
   char ip_string[CMDBUFSIZE];
   struct in_addr ip_addr;
@@ -395,13 +356,88 @@ void connect_cmd(const char *line){
 }
 
 
+void send_cmd(const char *line){
+  int num_consumed;
+  int socket;
+  const char *data;
+  int ret;
+
+  ret = sscanf(line, "send %d %n", &socket, &num_consumed);
+  if (ret != 1){
+    fprintf(stderr, "syntax error (usage: send [interface] [payload])\n");
+    return;
+  } 
+  data = line + num_consumed;
+  if (strlen(data) < 2){ // 1-char message, plus newline
+    fprintf(stderr, "syntax error (payload unspecified)\n");
+    return;
+  }
+
+  ret = v_write(socket, data, strlen(data)-1); // strlen()-1: stripping newline
+  if (ret < 0){
+    fprintf(stderr, "v_write() error: %s\n", strerror(-ret));
+    return;
+  }
+  printf("v_write() on %d bytes returned %d\n", strlen(data)-1, ret);
+	
+
+  return;
+}
+
+
+void recv_cmd(const char *line){
+  int socket;
+  size_t bytes_requested;
+  int bytes_read;
+  char should_loop;
+  char *buffer;
+  int ret;
+  
+  ret = sscanf(line, "recv %d %zu %c", &socket, &bytes_requested, &should_loop);
+  if (ret != 3){
+    should_loop = 'n';
+    ret = sscanf(line, "recv %d %zu", &socket, &bytes_requested);
+    if (ret != 2){
+      fprintf(stderr, "syntax error (usage: recv [interface] [bytes to read] "
+                                                "[loop? (y/n), optional])\n");
+      return;
+    }
+  }
+
+  buffer = (char *)malloc(bytes_requested+1); // extra for null terminator
+  assert(buffer);
+  memset(buffer, '\0', bytes_requested+1);
+  if (should_loop == 'y'){
+   // bytes_read = v_read_all(socket, buffer, bytes_requested);
+  }
+  else if (should_loop == 'n'){
+    bytes_read = v_read(socket, buffer, bytes_requested);
+  }
+  else {
+    fprintf(stderr, "syntax error (loop option must be 'y' or 'n')\n");
+    goto cleanup;
+  }
+
+  if (bytes_read < 0){
+    fprintf(stderr, "v_read() error: %s\n", strerror(-bytes_read));
+    goto cleanup;
+  }
+  buffer[bytes_read] = '\0';
+  printf("v_read() on %zu bytes returned %d; contents of buffer: '%s'\n",
+         bytes_requested, bytes_read, buffer);
+
+	cleanup:
+  free(buffer);
+  return;
+}
+
+
 
 void regular_update(int *updateTimer){
-	if (++(*updateTimer)== 10) {
-		*updateTimer = 0;
+	if(time(NULL) - lastRIPupdate > 5){
 		broadcast_rip_table();
+		lastRIPupdate = time(NULL);
 	}
-
 	//TCP CONNECTION TIMEOUT FEATURE: if we're expecting packets
 	/*
 	if(expect){
@@ -447,6 +483,78 @@ void regular_update(int *updateTimer){
 /*FUNCTIONS FROM IP---------------------------------------------------------------  */
 /*FUNCTIONS FROM IP---------------------------------------------------------------  */
 /*FUNCTIONS FROM IP---------------------------------------------------------------  */
+
+
+void *recv_thr_func(void *nothing){
+	struct timeval tv, tvcopy; 
+	char recvbuf[RECVBUFSIZE]; 
+	int received_bytes;
+	struct sockaddr sender_addr;
+	socklen_t addrlen= sizeof sender_addr;
+	struct iphdr *ipheader;
+	interface_t *i;
+	node_t *curr;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+
+	//recv_thr_func start here -----------------------------
+
+while(1){
+	readfds = masterfds;
+	tvcopy = tv;
+	if(select(maxfd+1, &readfds, NULL, NULL, &tvcopy) == -1){
+		perror("select()");
+		exit(1);
+	}
+
+	for(curr = interfaces->head;curr!=NULL;curr=curr->next){
+
+	i = (interface_t *)curr->data;
+
+	if(FD_ISSET(i->sockfd, &readfds)){
+
+			if ((received_bytes = recvfrom(i->sockfd, recvbuf, RECVBUFSIZE, 0, &sender_addr, &addrlen)) == -1) {
+				perror("recvfrom()");
+				exit(1);
+			} 
+			//this link is down
+			if(i->status==DOWN){continue;}
+
+			ipheader = (struct iphdr *)malloc(sizeof(struct iphdr));
+			uint32_t destaddr = decapsulate_fromip(recvbuf, &ipheader);
+
+			//it's for me!
+			if(id_address(destaddr)){
+				unsigned j;
+				for(j=0;j<sizeof(protocol_handlers) /sizeof(protocol_handlers[0]);j++){
+					if(ipheader->protocol == protocol_handlers[j].protocol){
+						protocol_handlers[j].handler(recvbuf, i, received_bytes);
+					}
+				}
+			}
+			//packet to be forwarded
+			else {
+				interface_t *inf;
+				inf = get_nexthop(ipheader->daddr);
+				char *packet = malloc(received_bytes);
+				memcpy(packet, recvbuf, received_bytes);
+				send_ip(inf, packet, received_bytes);
+				free(packet);
+			}
+
+			free(ipheader);
+		}
+	}
+}
+
+	for(curr=interfaces->head;curr!=NULL;curr=curr->next){
+		interface_t *i = (interface_t *)curr->data;
+		close(i->sockfd);
+		free(i->sourceaddr);
+		free(i->destaddr);
+		free(i);
+	}		//recv_thr_func() ends here-------------------------------------
+}
 
 
 void rip_handler(const char *packet, interface_t *i, int received_bytes){
@@ -497,6 +605,7 @@ void broadcast_rip_table() {
 
 	for(curr = interfaces->head;curr!=NULL;curr=curr->next){
 		i = (interface_t *)curr->data;
+		printf("rip table to %d\n", i->sockfd);
 		if(i->status==DOWN){
 			continue;
 		}

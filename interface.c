@@ -83,9 +83,9 @@ int setup_interface(char *filename) {
 		freeaddrinfo(destaddr);
 		freeaddrinfo(srcaddr);
 
-        	inf->sourcevip = ntohl(sing->local_virt_ip.s_addr);
+    inf->sourcevip = ntohl(sing->local_virt_ip.s_addr);
 		inf->destvip = ntohl(sing->remote_virt_ip.s_addr);
-    		inf->status = UP;
+   	inf->status = UP;
 		inf->mtu = MTU;
 
 		inet_ntop(AF_INET, (struct in_addr *) &inf->sourcevip, src, INET_ADDRSTRLEN);
@@ -168,6 +168,7 @@ int send_ip (interface_t *inf, const char *packet, int packetsize) {
 	int bytes_sent;
 	char tbs[packetsize];
 	memcpy(tbs, packet, packetsize);
+	printf("sendto %d\n", inf->sockfd);
 	bytes_sent = sendto(inf->sockfd, tbs, packetsize, 0, inf->destaddr, sizeof(struct sockaddr));
 
 	if(bytes_sent == -1){
