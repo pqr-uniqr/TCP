@@ -123,13 +123,25 @@ void socket_flush(socket_t *so){
 		unsigned char *payload = malloc(tosend);
 		CB_READ(sendw->buf, payload, tosend);
 		char *tcppacket = malloc(TCPHDRSIZE+tosend);
-		so->myseq+=tosend;	
+		//TODO look into this
+		so->myseq++;
 		encapsulate_intcp(so, payload, tosend, tcppacket);
+		//so->myseq+=tosend;	
 		free(payload);
 		send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
 		free(tcppacket);
 		sendw->lbs+=tosend;
 	}	
+	printf("flushed!!!\n");
+}
+
+
+void p_inc(int by, unsigned char *p){
+	int i;
+	for(i=0;i<by;i++){
+		p++;
+	}
+
 }
 
 
@@ -154,6 +166,7 @@ void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet){
 			so->myseq, 0,
 			0,0,0,0,0,
 			so->adwindow);
+	tcp_hton(header);
 	memcpy(packet, header, TCPHDRSIZE);
 	memcpy(packet+TCPHDRSIZE, data, datasize);
 	return;
@@ -166,16 +179,19 @@ void buf_mgmt(void *arg){
 	socket_t *so = fd_lookup(s);
 	sendw_t *sendw = so->sendw;
 	int unsent_bytes, unacked_bytes;
+
 	while(1){
 		if(!so->adwindow)	continue; //receiver window closed--probe
-		unsent_bytes = sendw->lbw - sendw->lbs;
-		unacked_bytes = sendw->lbw - sendw->lba;
-		if(!unsent_bytes) continue;//everything sent--retransmission is the only concern
+		unsent_bytes = (int) sendw->lbw - (int) sendw->lbs;
+		unacked_bytes = (int) sendw->lbs - (int) sendw->lba;
 
+		if(!unsent_bytes) continue;//everything sent--retransmission is the only concern
 		if((unsent_bytes >= MSS) && ((so->adwindow) >=MSS)){
 			socket_flush(so);
 		}
-		if( !unsent_bytes && (so->adwindow >= unacked_bytes)){
+
+		printf("%d unacked bytes\n", unacked_bytes);
+		if(!unacked_bytes && (so->adwindow >= unsent_bytes)){
 			socket_flush(so);
 		}
 	}

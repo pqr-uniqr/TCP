@@ -89,8 +89,6 @@ int main ( int argc, char *argv[]) {
 	while(1){
 
 		//TODO these functions should be modified to count time
-		regular_update(&lastRIPupdate);
-		decrement_ttl();
 
 		//command line parsing
 			unsigned k;
@@ -195,6 +193,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 			return;
 		}
 
+
 		//second grip (CLIENT)
 		if(SYN(tcpheader->orf) && ACK(tcpheader->orf)){
 			if(so->state != SYN_SENT){
@@ -213,25 +212,28 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 		//third grip & beyond
 		else {
 			//if anything arrives beyond the thidr grip, ESTABLISHED
-			if(so->state == SYN_RCVD) set_socketstate(so, ESTABLISHED);
+			if(so->state == SYN_RCVD){
+				set_socketstate(so, ESTABLISHED);
+				return;
+			}
 
 			if(ACK(tcpheader->orf)){
-
+				printf("incr by %d\n", tcpheader->ack_seq - so->myseq);
+				so->sendw->lba +=(tcpheader->ack_seq - so->myseq);
+				so->myseq = tcpheader->ack_seq;
 			} else {
 				//data packet received
 				recvw_t *rwin = so->recvw;
 				int payloadsize = ipheader->tot_len -IPHDRSIZE-TCPHDRSIZE;
 				if(CB_FULL(rwin->buf)) return; //not enough space to receive TODO memory
 				int cap = CB_GETCAP(rwin->buf);
-
 				//in order?
 				if(tcpheader->seqnum == so->ackseq){
-					int ret = CB_WRITE(rwin->buf, tcpheader+TCPHDRSIZE, MIN(cap, payloadsize));
-
+					int ret = CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
 					//there is no gap--straightforward pointer update
-					if(rwin->lbc+1 == rwin->nbe){
+					if((int)rwin->lbc+1 == (int)rwin->nbe){
 						rwin->lbc += payloadsize -1;
-						rwin->nbe = rwin->lbc + 1;
+						rwin->nbe += payloadsize;
 						so->ackseq += payloadsize;
 						so->adwindow -= ( (rwin->nbe-1) - rwin->lbr);
 					} else{
@@ -243,6 +245,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 				//time to send ACK
 				tcphdr *ack =tcp_craft_ack(so);
+				tcp_hton(ack);
 				send_tcp(so, ack, TCPHDRSIZE);
 			}
 		}
@@ -500,6 +503,10 @@ void *recv_thr_func(void *nothing){
 	//recv_thr_func start here -----------------------------
 
 while(1){
+
+	regular_update(&lastRIPupdate);
+	decrement_ttl();
+
 	readfds = masterfds;
 	tvcopy = tv;
 	if(select(maxfd+1, &readfds, NULL, NULL, &tvcopy) == -1){
@@ -605,7 +612,6 @@ void broadcast_rip_table() {
 
 	for(curr = interfaces->head;curr!=NULL;curr=curr->next){
 		i = (interface_t *)curr->data;
-		printf("rip table to %d\n", i->sockfd);
 		if(i->status==DOWN){
 			continue;
 		}

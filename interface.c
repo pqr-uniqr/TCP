@@ -168,7 +168,6 @@ int send_ip (interface_t *inf, const char *packet, int packetsize) {
 	int bytes_sent;
 	char tbs[packetsize];
 	memcpy(tbs, packet, packetsize);
-	printf("sendto %d\n", inf->sockfd);
 	bytes_sent = sendto(inf->sockfd, tbs, packetsize, 0, inf->destaddr, sizeof(struct sockaddr));
 
 	if(bytes_sent == -1){

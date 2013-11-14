@@ -64,3 +64,4 @@ void send_tcp(socket_t *so, char *tcppacket, int size);
 tcphdr *tcp_craft_ack(socket_t *so);
 void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet);
 void buf_mgmt(void *arg);
+void p_inc(int by, unsigned char *p);

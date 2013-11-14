@@ -186,14 +186,16 @@ int circular_buffer_write(circular_buffer_t *cbuf, const void *buf, size_t count
   pthread_mutex_unlock(&cbuf->pointer_lock);
   return ret;
 }
-
 int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 {
+		printf("CB_READ\n");
+
     if (cbuf == NULL) {
         return -1;
     }
+
     pthread_mutex_lock(&cbuf->pointer_lock);
-	
+
     int ret = -1;
     // Loop until we manually break out (when some data is read) -- skip if count == 0
     while (count > 0) {
@@ -209,7 +211,6 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 #endif
 	    // Calculate bytes to read before we wrap.
 	    uint16_t bytes_until_wrap = circular_buffer_get_bytes_until_wrap(cbuf, cbuf->read_pointer);
-	    
 	    // Don't wrap if we dont have to
 	    if (bytes_until_wrap > length_to_read) {
 		memcpy(buf, cbuf->read_pointer, length_to_read);

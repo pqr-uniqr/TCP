@@ -79,7 +79,7 @@ int v_accept(int socket, struct in_addr *node){
 	pthread_attr_t thr_attr;
 	pthread_attr_init(&thr_attr);
 	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
-	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt , NULL);
+	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt ,(void *) s);
 
 	HASH_ADD(hh2, socket_table, urport, keylen, nso);
 	free(request);
@@ -115,11 +115,12 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	init_windows(so);
 
 	//commence buffer management
+	int s = (int)socket;
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
 	pthread_attr_init(&thr_attr);
 	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
-	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt , NULL);
+	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt, (void *) s);
 
 	//store it in the lookup table (urport, myport, uraddr)
 	HASH_ADD(hh2, socket_table, urport, keylen, so);
@@ -144,7 +145,6 @@ void init_windows(socket_t *so){
 	so->recvw->lbc = recv_start;
 	so->recvw->nbe = recv_start + 1;
 	so->recvw->lbr = recv_start;
-	printf("%d - %d = %d \n", so->recvw->nbe,so->recvw->lbr, (int)so->recvw->nbe - (int)so->recvw->lbr);
 	return;
 }
 
@@ -159,15 +159,13 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 
 
 
-
-
 int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	socket_t *so = fd_lookup(socket);
 	recvw_t *recvw = so->recvw;
-	printf("%d bytes available for read\n", (recvw->nbe) - (recvw->lbr) -1);
-	int toread = MIN(nbyte, (recvw->nbe) - (recvw->lbr) - 1);
+	int toread = MIN(nbyte, (int)recvw->nbe - (int)recvw->lbr - 1);
+	if(!toread) return;
 	recvw->lbr += toread;
-	return CB_READ(recvw, buf, toread);
+	return CB_READ(recvw->buf, buf, toread);
 }
 
 
