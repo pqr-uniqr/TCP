@@ -58,7 +58,7 @@
 //TCP macros
 #define MSS 1400
 #define MAXPORT 65535 
-#define MAXSEQ 65535
+#define MAXSEQ 100
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
 #define CBT circular_buffer_t

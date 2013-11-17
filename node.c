@@ -3,6 +3,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+//undefine to see no printf()s
+#define DEBUG
+
+
 int maxfd;
 list_t  *interfaces, *routes;
 socket_t *fd_list; //hash table (id, socket) 
@@ -138,6 +142,30 @@ int main ( int argc, char *argv[]) {
 
 
 
+int v_read_all(int s, void *buf, size_t bytes_requested){
+  int ret;
+  size_t bytes_read;
+
+  bytes_read = 0;
+  while (bytes_read < bytes_requested){
+    ret = v_read(s, buf + bytes_read, bytes_requested - bytes_read);
+		/*  
+    if (ret == -EAGAIN){
+      continue;
+    }
+    if (ret < 0){
+      return ret;
+    }
+    if (ret == 0){
+      fprintf(stderr, "warning: v_read() returned 0 before all bytes read\n");
+      return bytes_read;
+    }
+		*/
+    bytes_read += ret;
+  }
+
+  return bytes_read;
+}
 
 
 //initial branching of cases will happen here!
@@ -200,7 +228,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 					//goto cleanup; //"packet inappropriate for current connection state"
 			}
 			set_socketstate(so, ESTABLISHED);
-			so->ackseq= tcpheader->seqnum;
+			so->ackseq= ++(tcpheader->seqnum); 
 			so->adwindow = tcpheader->adwindow;
 
 			tcp_send_handshake(3, so);
@@ -217,36 +245,69 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 				return;
 			}
 
+			//SLDING WINDOW GOES HERE!
 			if(ACK(tcpheader->orf)){
-				printf("incr by %d\n", tcpheader->ack_seq - so->myseq);
-				so->sendw->lba +=(tcpheader->ack_seq - so->myseq);
-				so->myseq = tcpheader->ack_seq;
-			} else {
-				//data packet received
-				recvw_t *rwin = so->recvw;
-				int payloadsize = ipheader->tot_len -IPHDRSIZE-TCPHDRSIZE;
-				if(CB_FULL(rwin->buf)) return; //not enough space to receive TODO memory
-				int cap = CB_GETCAP(rwin->buf);
-				//in order?
-				if(tcpheader->seqnum == so->ackseq){
-					int ret = CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
-					//there is no gap--straightforward pointer update
-					if((int)rwin->lbc+1 == (int)rwin->nbe){
-						rwin->lbc += payloadsize -1;
-						rwin->nbe += payloadsize;
-						so->ackseq += payloadsize;
-						so->adwindow -= ( (rwin->nbe-1) - rwin->lbr);
-					} else{
-						//TODO there is a gap --pointer update
-					}
-				} else {
-						//TODO packet arrived out of order
+				//TODO detect duplicate ACK
+				
+				//update last byte acked -- trust this formula
+				int acked_bytes = so->sendw->lbs -(so->myseq - tcpheader->ack_seq)- so->sendw->lba;
+				int unacked_bytes = so->sendw->lbs - so->sendw->lba - acked_bytes;
+				printf("%d bytes newly acked\n", acked_bytes);
+				so->sendw->lba += acked_bytes;
+				CB_READ(so->sendw->buf, NULL, acked_bytes);
+
+				if(!acked_bytes && unacked_bytes){
+					//TODO this must be a duplicate ack?
+					
 				}
 
-				//time to send ACK
-				tcphdr *ack =tcp_craft_ack(so);
-				tcp_hton(ack);
-				send_tcp(so, ack, TCPHDRSIZE);
+#ifdef DEBUG
+				printf("TCP: %d new bytes acknowledged\n", acked_bytes);
+#endif
+				int payloadsize = ipheader->tot_len -IPHDRSIZE - TCPHDRSIZE;
+				//data in the packet
+				if(payloadsize){
+					recvw_t *rwin = so->recvw;
+					if(CB_FULL(rwin->buf)) return; //not enough space to receive TODO memory
+					int cap = CB_GETCAP(rwin->buf);
+	
+					//in order?
+					if(tcpheader->seqnum == so->ackseq){
+#ifdef DEBUG 
+						printf("TCP: in-order data packet received\n");
+						printf("	[segment: %d ---(%d bytes)--- %d]\n", tcpheader->seqnum,
+								payloadsize, tcpheader->seqnum + payloadsize);
+#endif
+					int ret = CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
+					//there is no gap--straightforward pointer update
+					if(rwin->lbc+1 == rwin->nbe){
+#ifdef DEBUG //no previous gap
+						printf("TCP: No previous gap detected--good day to be TCP\n");
+						printf("TCP: %d bytes of data in receiving window\n", CB_SIZE(rwin->buf));
+#endif
+						rwin->lbc += payloadsize;
+						rwin->nbe += payloadsize;
+						so->ackseq += payloadsize;
+						so->adwindow = CB_GETCAP(rwin->buf);
+					} else{
+#ifdef DEBUG
+						printf("TCP: packet is in order, but we've had gap--buffer scan in order\n");
+#endif 
+						//TODO there is a gap --update pointers accordingly
+					}
+					} else {
+#ifdef DEBUG
+						printf("TCP: packet arrived out of order\n");
+#endif 
+							//TODO packet arrived out of order
+					}
+
+					//time to send ACK -- ACK or a duplicate ACK
+					//TODO piggyback data?
+					tcphdr *ack =tcp_craft_ack(so);
+					tcp_hton(ack);
+					send_tcp(so, ack, TCPHDRSIZE);
+				}
 			}
 		}
 
@@ -411,7 +472,7 @@ void recv_cmd(const char *line){
   assert(buffer);
   memset(buffer, '\0', bytes_requested+1);
   if (should_loop == 'y'){
-   // bytes_read = v_read_all(socket, buffer, bytes_requested);
+  	bytes_read = v_read_all(socket, buffer, bytes_requested);
   }
   else if (should_loop == 'n'){
     bytes_read = v_read(socket, buffer, bytes_requested);
@@ -437,10 +498,13 @@ void recv_cmd(const char *line){
 
 
 void regular_update(int *updateTimer){
-	if(time(NULL) - lastRIPupdate > 5){
+	printf("regular_update\n");
+	time_t now = time(NULL);
+	if( (now - lastRIPupdate) > 2){
 		broadcast_rip_table();
-		lastRIPupdate = time(NULL);
+		lastRIPupdate = now;
 	}
+
 	//TCP CONNECTION TIMEOUT FEATURE: if we're expecting packets
 	/*
 	if(expect){
@@ -509,6 +573,7 @@ while(1){
 
 	readfds = masterfds;
 	tvcopy = tv;
+
 	if(select(maxfd+1, &readfds, NULL, NULL, &tvcopy) == -1){
 		perror("select()");
 		exit(1);

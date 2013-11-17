@@ -2,7 +2,10 @@ PSEUDOCODE for TCP - Connection Establishment
 
 
 [TODOS & NOTES]
-do free tcpheader and ipheader in tcp_handler (goto didn't work for some reason)
+do free packets properly in tcp_handler() (goto didn't work for some reason)
+
+do send RST if no one is listening on the port
+	->for now, I just send back a packet with nothing but RST set
 
 do connection timeout feature
 	*list.c has no deletion feature !!! do this
@@ -11,34 +14,14 @@ do connection timeout feature
 			-add attribute to socket_t that represents deleted state
 	*maybe just set the state to CLOSED?
 
-do send RST if no one is listening on the port
-	->for now, I just send back a packet with nothing but RST set
-
 do when to calculate checksum? "DELAYED: NOT A BLOCKING ISSUE"
-	*when do we need to calculate checksum? whenever we send something
-	->whenever we call v_write():
-		1-first grip (connection request)
-			v_connect()
-		2-second grip 
-			v_accept()
-		3-third grip
-			tcp_handler()
-		4-beyond third grip (message transfer & acknowledgement)
-			don't know yet 
-
-	*we need a checksum calculation function that takes in:
-		1-saddr and daddr
-		2-protocol (is known)
-		3-tcp length
-		4-tcp header
-		5-data itself
+	*tcp_checksum(struct addr_in saddr, addr_in daddr, uint8_t protocol,
+			uint16_t transport_packet_len, char *transport_packet)
 
 	*test the function with the TAnode ->//TODO I don't know how TAnode calculates checksum
 						//but it ain't looking reasonable
 						
 						
-						
-
 #An in-depth, detailed study on the packet format of the TA node and struct tcphdr
 
 #simplify scenario to actual pseudocode

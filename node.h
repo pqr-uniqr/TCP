@@ -20,6 +20,8 @@ void accept_cmd(const char *line);
 void connect_cmd(const char *line);
 void send_cmd(const char *line);
 void recv_cmd(const char *line);
+
+int v_read_all(int s, void *buf, size_t bytes_requested);
 /*  
 void sendfile_cmd(const char *line);
 void recvfile_cmd(const char *line);

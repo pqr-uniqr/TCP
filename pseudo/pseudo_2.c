@@ -2,6 +2,51 @@ PSEUDOCODE for TCP - Sliding Window
 
 [new TODOs and NOTES]
 PRINCIPLE: Whenever possible, don't pass malloc-ed data down or up
+	DO:  the only exception is tcp_mastercrafter and other functions that use it
+
+PRINCIPLE: SOCKET SEQUENCE/ACKSEQ NUMBER UPDATE
+	-a socket's acknowledge number is updated when packet arrives
+		!!!always increments together with NBE
+	-sequence number (next byte to be sent) is updated when packet goes out
+		!!!unless it's a retransmission--sequence number stays the same
+
+PRINCIPLE: Sender must limit the amount of unacked bytes to adwindow at any point
+
+DO: sequence number should wrap around!
+	initial capacity should be registered as the corresponding window's max sequence number
+	receiver should be able to wrap ACK around
+	sender should be able to wrap his SEQ around
+
+DO: The pointers should wrap around as well
+	we can do this by
+
+DO: define macros that shortens "->buf" for recv/send windows
+
+DO: hton and ntoh for data
+
+DO: v_read_all behavior (small fix)
+
+DO: locking data structure: CB already has a lock--should i just expand CB
+
+DO: Delayed ACK-- scenario --> ABORTED: NOT INCLUDED IN OUR RFC
+	in tcp_handler():
+		if(data packet received in order)
+			if(last byte acked on the receiving window == next byte expected - 1)
+				receiving_window->last_byte_received += datasize
+				so->ack_seq += datasize
+				//TODO normally, these are set to 0
+				receiving_window->delay_ack_trigger = so->ack_seq
+				receiving_window->delay_ack_timestamp = time()
+	in win_mgmt():
+			if(recieving_window->delay_ack_trigger)
+				//TODO this probably needs a lock on the window
+				if(delay_ack_trigger < so->ack_seq)
+					//new packet must have arrived
+					send_ack
+				if(time() - receiving_window->delay_ack_timestamp > 500ms)
+					send_ack 
+
+DO: Sequence number has to be 2*window size
 
 #: put packet handler as a seprarate thread (detach that shit)
 			-> this will allow for blocking commands to run
@@ -12,8 +57,14 @@ PRINCIPLE: Whenever possible, don't pass malloc-ed data down or up
 	#3 - SETUP
 	#4 - FUNCTIONS
 
+#: pointer math must be done with pointers cast to int
 
-DO: pointer math must be done with pointers cast to int
+#: ACK bit is always set 
+	12314141!!! right now, handler handles ACK segments separately-- fix this!
+	to make get some closure from the inorder scenario, make sure node is checking
+	to see if it received what it expected
+
+
 
 
 [Scenario 1-3WH & perfect world transmission]
@@ -134,14 +185,15 @@ on A: thread running buf_mgmt_func() reads the buffer and decides to flush
 			if(unsent_bytes)
 				//TODO wraparound
 				if((unsent_bytes >= MSS) && ((sendw->adwindow) >= MSS))
-					buf_flush(so);
+					socket_flush(so);
 				else if(!unacked_bytes && sendw->adwindow >= unacked_bytes)
-					buf_flush(so);
-					"buf_flush(socket_t *so)"
+					socket_flush(so);
+					"socket_flush(socket_t *so)"
 						We need to send out everything in the sending window: What do we do?
 							1-loop through in chunks of MSS, package data inside TCP header
 							2-send it away using send_tcp()
 							3-update last byte sent
+							4-update my sequence number (next sequence to be sent)
 							4-?? WHAT IF GAP?
 							sendw_t *sendw = so->sendw
 							int tosend
@@ -150,7 +202,7 @@ on A: thread running buf_mgmt_func() reads the buffer and decides to flush
 								void *payload = malloc(tosend)
 								CB_READ(sendw->buf, payload, tosend)
 								char *tcppacket = malloc(TCPHDRSIZE+tosend)
-								so->seqnum+=tosend
+								so->myseq+=tosend
 								encapsulate_intcp(so, payload, tosend, tcppacket)
 								"encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet)"
 									tcphdr *header = tcp_mastercrafter(so->myport,so->urport,
@@ -313,8 +365,8 @@ $struct definition
 		uint32_t myaddr
 		uint32_t state
 
-		uint32_t myseq //for now, increment before crafting a new packet
-		uint32_t ackseq //sender assumes this is next sequence number expected
+		uint32_t myseq //byte # where next transmission begins (not retransmission though)
+		uint32_t ackseq //next sequence number that the socket expects
 		uint32_t adwindow //sender assumes this is (buffersize-amount of data ready to be read)
 											//on the receiver
 		bqueue_t *q //queue for the passive sockets
@@ -366,7 +418,7 @@ $function definition
 		return ret;
 	*void buf_mgmt(void *arg) --FILE: srwindow
 		
-	*void buf_flush(socket_t *so) --FILE: srwindow
+	*void socket_flush(socket_t *so) --FILE: srwindow
 	*int v_read(int socket, unsigned char *buf, uint32_t nbyte) --FILE: v_api.c
 
 	*void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet)--FILE: tcp_util

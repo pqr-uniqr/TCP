@@ -13,7 +13,7 @@
 #include <stdio.h>
 
 // Uncomment this to enable debugging.
-// #define CIRCULAR_BUFFER_DEBUG
+#define CIRCULAR_BUFFER_DEBUG
 
 /**
  * Print buffer contents as if they are characters.
@@ -188,7 +188,7 @@ int circular_buffer_write(circular_buffer_t *cbuf, const void *buf, size_t count
 }
 int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 {
-		printf("CB_READ\n");
+		printf("circular-buffer-read\n");
 
     if (cbuf == NULL) {
         return -1;
@@ -239,6 +239,7 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 	    }
 	    
 	    // Update size, set return value and wake up someone waiting to write data.
+			printf("About to break\n");
 	    cbuf->size -= length_to_read;
 	    ret = length_to_read;
 	    pthread_cond_signal(&cbuf->cond_write);
@@ -249,9 +250,11 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 		break;
 	    }
 #ifdef CIRCULAR_BUFFER_DEBUG
-	    printf("Going to sleep...\n");
+	    printf("Going to sleep... because buffer's empty and count is %d\n", count);
 #endif
 	    // Sleep until there is some data available.
+			// ??????who told you you can go to sleep? you're just gonna
+			// block the caller thread just like that? on whose authority?
 	    pthread_cond_wait(&cbuf->cond_read, &cbuf->pointer_lock);
 	}
     }
@@ -261,6 +264,7 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 #endif
     
     pthread_mutex_unlock(&cbuf->pointer_lock);
+		printf("asdf\n");
     return ret;
 }
 

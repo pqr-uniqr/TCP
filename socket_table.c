@@ -118,53 +118,49 @@ void set_socketstate(socket_t *so, int state){
 void socket_flush(socket_t *so){
 	sendw_t *sendw = so->sendw;
 	int tosend;
+	int sent = 0;
 	while(!CB_EMPTY(sendw->buf)){
 		tosend = MIN(MSS, CB_SIZE(sendw->buf));
 		unsigned char *payload = malloc(tosend);
+		printf("socket_flush\n");
 		CB_READ(sendw->buf, payload, tosend);
 		char *tcppacket = malloc(TCPHDRSIZE+tosend);
 		//TODO look into this
-		so->myseq++;
 		encapsulate_intcp(so, payload, tosend, tcppacket);
-		//so->myseq+=tosend;	
-		free(payload);
-		send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
-		free(tcppacket);
+		so->myseq+=tosend;	
 		sendw->lbs+=tosend;
+		free(payload);
+		sent += send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
+		free(tcppacket);
 	}	
-	printf("flushed!!!\n");
-}
 
-
-void p_inc(int by, unsigned char *p){
-	int i;
-	for(i=0;i<by;i++){
-		p++;
-	}
+#ifdef DEBUG
+	printf("buffer flushed: %d bytes sent\n", sent);
+#endif
 
 }
 
 
-void send_tcp(socket_t *so, char *tcppacket, int size){
+int send_tcp(socket_t *so, char *tcppacket, int size){
 	interface_t *nexthop = get_nexthop(so->uraddr);
 	char *packet = malloc(IPHDRSIZE + size);
 	encapsulate_inip(so->myaddr, so->uraddr, (uint8_t)TCP, (void *) tcppacket, size, &packet);
-	send_ip(nexthop, packet, IPHDRSIZE+size);
-	return;
+	return send_ip(nexthop, packet, IPHDRSIZE+size);
 }
 
 tcphdr *tcp_craft_ack(socket_t *so){
 	return tcp_mastercrafter(so->myport, so->urport,
-		0,so->ackseq,
+		so->myseq,so->ackseq,
 		0,0,0,0,1,
 		so->adwindow);
 }
 
 
+//for making data packet
 void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet){
 	tcphdr *header = tcp_mastercrafter(so->myport, so->urport,
-			so->myseq, 0,
-			0,0,0,0,0,
+			so->myseq, so->ackseq,
+			0,0,0,0,1,
 			so->adwindow);
 	tcp_hton(header);
 	memcpy(packet, header, TCPHDRSIZE);
@@ -174,7 +170,6 @@ void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet){
 
 
 void buf_mgmt(void *arg){
-
 	int s=(int)arg;
 	socket_t *so = fd_lookup(s);
 	sendw_t *sendw = so->sendw;
@@ -190,7 +185,6 @@ void buf_mgmt(void *arg){
 			socket_flush(so);
 		}
 
-		printf("%d unacked bytes\n", unacked_bytes);
 		if(!unacked_bytes && (so->adwindow >= unsent_bytes)){
 			socket_flush(so);
 		}

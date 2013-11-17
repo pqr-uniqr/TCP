@@ -60,7 +60,7 @@ void print_sockets();
 void print_socket(socket_t *sock);
 void set_socketstate(socket_t *so, int state);
 void socket_flush(socket_t *so);
-void send_tcp(socket_t *so, char *tcppacket, int size);
+int send_tcp(socket_t *so, char *tcppacket, int size);
 tcphdr *tcp_craft_ack(socket_t *so);
 void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet);
 void buf_mgmt(void *arg);

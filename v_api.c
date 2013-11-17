@@ -16,6 +16,7 @@
  * =====================================================================================
  */
 
+#define SIMPLESEQ //start with Sequence number 0 --easier to debug
 #include "v_api.h"
 
 int v_socket(){
@@ -68,8 +69,11 @@ int v_accept(int socket, struct in_addr *node){
 	memcpy(&(nso->uraddr), request+TCPHDRSIZE, SIZE32);
 	memcpy(&(nso->myaddr), request+TCPHDRSIZE+SIZE32, SIZE32);
 	nso->urport = ((tcphdr *)request)->sourceport;
-	nso->ackseq= ((tcphdr *)request)->seqnum; //leave increments to sending funcs
-	nso->myseq = rand() %MAXSEQ;
+	nso->ackseq= ++(((tcphdr *)request)->seqnum); 
+	nso->myseq = rand() % MAXSEQ;
+	#ifdef SIMPLESEQ
+	nso->myseq = 0;
+	#endif
 	set_socketstate(nso, SYN_RCVD);
 	nso->adwindow = ((tcphdr*)request)->adwindow;
 	init_windows(nso);
@@ -81,10 +85,9 @@ int v_accept(int socket, struct in_addr *node){
 	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt ,(void *) s);
 
+	//add to socket_table
 	HASH_ADD(hh2, socket_table, urport, keylen, nso);
 	free(request);
-
-	//TODO start a thread that runs sliding window protocol
 
 	//if caller wants request origin
 	if(node!=NULL) node->s_addr = nso->uraddr;
@@ -111,6 +114,9 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	interface_t *i = get_nexthop(so->uraddr);
 	so->myaddr = i->sourcevip;
 	so->myseq = rand() % MAXSEQ;
+	#ifdef SIMPLESEQ
+	so->myseq = 0;
+	#endif
 	set_socketstate(so, SYN_SENT);
 	init_windows(so);
 
@@ -150,31 +156,35 @@ void init_windows(socket_t *so){
 
 int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	socket_t *so = fd_lookup(socket);
+	if(so==NULL) return 0; //no such socket
 	if(CB_FULL(so->sendw->buf)) return 0; //"no write possible"
 	int cap = CB_GETCAP(so->sendw->buf);
 	int ret = CB_WRITE(so->sendw->buf, buf, MIN(cap, nbyte));
+	printf("%d written to the buffer\n", ret);
 	so->sendw->lbw = so->sendw->lbw + ret;
 	return ret;
 }
 
 
-
 int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	socket_t *so = fd_lookup(socket);
+	if(so==NULL) return 0; //no such socket
 	recvw_t *recvw = so->recvw;
-	int toread = MIN(nbyte, (int)recvw->nbe - (int)recvw->lbr - 1);
-	if(!toread) return;
+	int toread = MIN(nbyte, CB_SIZE(recvw->buf));
+	if(toread <= 0) return 0;
+	printf("v_read\n");
+	int ret = CB_READ(recvw->buf, buf, toread);
 	recvw->lbr += toread;
-	return CB_READ(recvw->buf, buf, toread);
+	so->adwindow = CB_GETCAP(recvw->buf);
+	return ret;
 }
-
 
 
 void tcp_send_handshake(int gripnum, socket_t *socket){
 	tcphdr *header;
 	switch(gripnum){
 		case 0:
-			//RST
+			//TODO RST
 			header = tcp_mastercrafter(0, 0,
 									0, 0,
 									0,0,1,0,0,
@@ -190,14 +200,14 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 		case 2 :
 			//second of 3WH
 			header =  tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, ++(socket->ackseq),
+									(socket->myseq)++, socket->ackseq,
 									0,1,0,0,1,
 									MAXSEQ);
 			break;
 		case 3 :
 			//third of 3WH
 			header =  tcp_mastercrafter(socket->myport, socket->urport,
-									++(socket->myseq), ++(socket->ackseq),
+									++(socket->myseq), socket->ackseq, 
 									0,0,0,0,1,
 									MAXSEQ);
 	}
