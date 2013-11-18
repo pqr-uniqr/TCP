@@ -2,7 +2,7 @@ C = gcc
 CFLAGS = -Wall -Wextra -std=gnu99 -D_REENTRANT -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 LDFLAGS = -pthread 
 
-UTIL= csupport/list.c csupport/dbg.c csupport/ipsum.c csupport/parselinks.c csupport/bqueue.c csupport/circular_buffer.c
+UTIL= csupport/list.c csupport/dbg.c csupport/ipsum.c csupport/parselinks.c csupport/bqueue.c csupport/circular_buffer.c 
 
 #source code
 SRC=$(wildcard *.c)

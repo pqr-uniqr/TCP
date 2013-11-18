@@ -2,7 +2,7 @@ PSEUDOCODE for TCP - Sliding Window
 
 [new TODOs and NOTES]
 PRINCIPLE: Whenever possible, don't pass malloc-ed data down or up
-	DO:  the only exception is tcp_mastercrafter and other functions that use it
+	the only exception is tcp_mastercrafter and other functions that use it
 
 PRINCIPLE: SOCKET SEQUENCE/ACKSEQ NUMBER UPDATE
 	-a socket's acknowledge number is updated when packet arrives
@@ -12,15 +12,15 @@ PRINCIPLE: SOCKET SEQUENCE/ACKSEQ NUMBER UPDATE
 
 PRINCIPLE: Sender must limit the amount of unacked bytes to adwindow at any point
 
-DO: sequence number should wrap around!
+PRINCIPLE: LBA is always the sequence number of the first element in the retransmission q
+		-->if the retransmission queue is empty, LBA == LBS
+
+DO: wrap around
 	initial capacity should be registered as the corresponding window's max sequence number
 	receiver should be able to wrap ACK around
 	sender should be able to wrap his SEQ around
 
-DO: The pointers should wrap around as well
-	we can do this by
-
-DO: define macros that shortens "->buf" for recv/send windows
+DO: keep a running average of RTT
 
 DO: hton and ntoh for data
 
@@ -28,25 +28,18 @@ DO: v_read_all behavior (small fix)
 
 DO: locking data structure: CB already has a lock--should i just expand CB
 
-DO: Delayed ACK-- scenario --> ABORTED: NOT INCLUDED IN OUR RFC
-	in tcp_handler():
-		if(data packet received in order)
-			if(last byte acked on the receiving window == next byte expected - 1)
-				receiving_window->last_byte_received += datasize
-				so->ack_seq += datasize
-				//TODO normally, these are set to 0
-				receiving_window->delay_ack_trigger = so->ack_seq
-				receiving_window->delay_ack_timestamp = time()
-	in win_mgmt():
-			if(recieving_window->delay_ack_trigger)
-				//TODO this probably needs a lock on the window
-				if(delay_ack_trigger < so->ack_seq)
-					//new packet must have arrived
-					send_ack
-				if(time() - receiving_window->delay_ack_timestamp > 500ms)
-					send_ack 
-
 DO: Sequence number has to be 2*window size
+
+#: Retransmission queue
+	#- add segments to retransmission queue when flushing
+			keep lba as the seqnum of the first segment in this queue
+	#- remove segments from queue when ack is received
+			keep lba as the seqnum of the first ....
+	#- make mgmt function keep an eye on the timeout
+	
+#: sending window is no longer in charge of taking care of last byte acknowledged
+
+#: Delayed ACK-- scenario --> ABORTED: NOT INCLUDED IN OUR RFC
 
 #: put packet handler as a seprarate thread (detach that shit)
 			-> this will allow for blocking commands to run
@@ -138,9 +131,7 @@ on A: user types in "send socknum, data"
 					--> basically, send MIN(num_consumed, strlen(data))
 
 			now call "v_write(socket, data, strlen(data)-1)":
-				what does this do? v_write does not always write everything
-				v_write is a non-blocking function that writes as much as
-				space allows and returns
+				what does this do? non-blocking write to the sending window buffer
 
 				//get socket
 				socket_t *so = fd_lookup(socket)
@@ -152,14 +143,14 @@ on A: user types in "send socknum, data"
 				//write as much as possible
 				ret = CB_WRITE(so->sendw->buf, data, MIN(capacity,num_consumed))
 				//update last byte written
-				so->sendw->lbw = so->sendw->lbw + ret
+				so->sendw->lbw += ret //TODO wrap
 				return ret
 					
 on A: thread running buf_mgmt_func() reads the buffer and decides to flush
 		What does this thread do?
-		1- It uses nagle's algorithm to decide when to send + adwindow availability
+		#- It uses nagle's algorithm to decide when to send + adwindow availability
 		2- if adwindow is set to 0, this thread sends probe packet "every second"
-		3- if some sent data is not acked for more than "timeout", retransmits it
+		3- if some "sent" data is not acked for more than "timeout", retransmits it
 		4- for every ACK received, it calculates RTT and uses it to maintain reasonable timeout
 		CONCERNS:
 			1- circular buffer already has a lock-buf if we want to keep our own set of pointers,
@@ -179,11 +170,10 @@ on A: thread running buf_mgmt_func() reads the buffer and decides to flush
 				continue;
 			}
 			//do we have data to send?
-			unsent_bytes = sendw->lbw - sendw->lbs
-			unacked_bytes = sendw->lbw - sendw->lba
+			unsent_bytes = sendw->lbw - sendw->lbs //TODO wrap
+			unacked_bytes = sendw->lbw - sendw->lba //TODO wrap
 
 			if(unsent_bytes)
-				//TODO wraparound
 				if((unsent_bytes >= MSS) && ((sendw->adwindow) >= MSS))
 					socket_flush(so);
 				else if(!unacked_bytes && sendw->adwindow >= unacked_bytes)
@@ -194,7 +184,8 @@ on A: thread running buf_mgmt_func() reads the buffer and decides to flush
 							2-send it away using send_tcp()
 							3-update last byte sent
 							4-update my sequence number (next sequence to be sent)
-							4-?? WHAT IF GAP?
+							4-?? WHAT IF GAP? WHY WOULD THERE BE A GAP IN THE SENDING WINDOW?
+
 							sendw_t *sendw = so->sendw
 							int tosend
 							while(!CB_EMPTY(sendw->buf))
@@ -202,20 +193,20 @@ on A: thread running buf_mgmt_func() reads the buffer and decides to flush
 								void *payload = malloc(tosend)
 								CB_READ(sendw->buf, payload, tosend)
 								char *tcppacket = malloc(TCPHDRSIZE+tosend)
-								so->myseq+=tosend
 								encapsulate_intcp(so, payload, tosend, tcppacket)
-								"encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet)"
-									tcphdr *header = tcp_mastercrafter(so->myport,so->urport,
-										so->seqnum,0,
-										0,0,0,0,0,
-										so->adwindow)
-									memcpy(packet, header, TCPHDRSIZE)
-									memcpy(packet+TCPHDRSIZE, data, datasize)
-									return
-								free(payload)
-								send_tcp(so, tcppacket, tosend+TCPHDRSIZE)
+								sent += send_tcp(so, tcppacket, tosend+TCPHDRSIZE)
+
+								//TODO store in retrans queue with timestamp
+								retrans_t *el = malloc(sizeof(retrans_t))
+								el->seqnum = so->myseq
+								el->seglen = tosend
+								gettimeofday(&el->lastsent, NULL)
+								el->data = payload
+								el->retrans_count = 0
+								DL_APPEND(sendw->retrans_q_head, el)
+
+								so->myseq+=tosend //TODO wrap
 								free(tcppacket)
-								sendw->lbs+=tosend
 
 			//RETRANSMISSION--has the earliest unacked packet timed out?
 			/*
@@ -235,9 +226,9 @@ on B: tcp_handler receives packet containing flushed data
 		else ...
 			if(SYN && ACK) ...
 			else  ...
-				if(ACK)  ...
-				else restrict
-					So we just got a data packet: What do we do?
+				if(ACK) 
+					So we just got a data packet with an ACK in it: What do we do?
+						0-read the ack number
 						1-check if we can receive anything
 						2-check if this packet is "within our receiving range": for now, do nothing
 						3-check if this packet is in order VS out of order
@@ -247,40 +238,48 @@ on B: tcp_handler receives packet containing flushed data
 						7-update ackseq (next sequence number to be ACKed)
 						8-update adwindow : how much space do we have left in our recv buffer?
 						9-respond to the packet with an ACK (acknowledge NBE -1)
-					recvw_t *rwin=so->recvw
+
+					int acked_bytes = lbs - lba - (myseq - ackseq) //TODO wrap
+					int unacked_bytes = lbs - lba - acked_bytes //TODO wrap
+
+					so->sendw->lba += acked_bytes
+					CB_READ(so->sendw->buf, NULL, acked_bytes)
+
+					if(!acked_bytes && uncked_bytes):
+						//if this ack has no effect + we have unacked bytes
+
+					recvw_t *rwin = so->recvw
 					int payloadsize = ipheader->tot_len-IPHDRSIZE-TCPHDRSIZE
 
+					//any data in here?
+					if(payloadsize)
+					//is there space?
 					if(CB_FULL(rwin->buf)) //TODO abandon receiving (any other actions?)
 					cap = CB_GETCAP(rwin->buf)  
 
 					//OBJECTIVE: write and update pointers correctly
+					//is this what we've been expecting?
 					if(tcpheader->seqnum == so->ackseq):
 						//packet arrived in order!
 						ret = CB_WRITE(rwin->buf, tcpheader+TCPHDRSIZE, MIN(cap,dsize))
 
 						//if no gap
 						if(rwin->lbc + 1 == rwin->nbe):
-							rwin->lbc += payloadsize -1
-							rwin->nbe = rwin->lbc + 1 
-							so->ackseq += payloadsize //TODO potential wraparound
-							so->adwindow -= ( (rwin->nbe - 1) - rwin->lbr) //TODO potential wraparound
+							rwin->lbc += payloadsize -1 //TODO wrap
+							rwin->nbe = rwin->lbc + 1  //TODO wrap
+							so->ackseq += payloadsize //TODO wrap
+							so->adwindow -= ( (rwin->nbe - 1) - rwin->lbr) //TODO wrap
 						else:
 							//TODO there is a gap
+							
 					else:
 						//TODO out of order: how to buffer this
 
+					//now let's ack this
 					tcphdr *ack = "tcp_craft_ack(so)"
-						return  tcp_mastercrafter(so->myport, so->urport,
-							0, so->ackseq,
-							0,0,0,0,1,
-							so->adwindow);
+					tcp_hton(ack)
 					send_tcp(so, ack, TCPHDRSIZE);
-					"send_tcp(socket_t so ,char *tcppacket, int size)"
-						interface_t *nexthop = get_nexthop(so->uraddr)
-						char *packet = malloc(IPHDRSIZE+size)
-						encapsulate_inip(so->myaddr,so->uraddr,(uint8_t)TCP,(void *)tcppacket,size,&packet)
-						send_ip(nexthop, packet, IPHDRSIZE+size)
-		
+
 on B: "recv socknum, numbytes, n"
 		recv_cmd(const char *line)
 			
@@ -302,6 +301,65 @@ on B: "recv socknum, numbytes, n"
 				recvw->lbr += toread
 				return CB_READ(socket->recvw, buffer, toread)
 
+
+on A: buf_mgmt checks if anything on retransmission queue has timed out
+	buf_mgmt(void *arg)
+		int s = (int) arg
+		socket_t *so = fd_lookup(s)
+		sendw_t *sendw = so->sendw
+		int unsent_bytes, unacked_bytes
+
+		retrans_t *elt
+		struct timeval nowt;
+
+		while(1):
+			if(!so->adwindow) continue //probe
+			unsent bytes = ~~
+			unacked_bytes = 
+
+			//there's unacked bytes: must be something in the retrans q
+			if(unacked_bytes){
+				//TODO performance concern (we should be able to check just the head)
+				DL_FOREACH(sendw->retrans_q_head, elt){
+					gettimeofday(&nowt)
+					double now = nowt.tv_sec + (nowt.tv_usec /1000000.0)
+					double then = elt->lastsent.tv_sec + (elt->lastsent.tv_usec/1000000.0)
+					if(now - then > TIMEOUT) //timeout is a fixed macro (for now)
+						elt->retrans_count++
+						char *tcppacket = malloc(TCPHDRSIZE+elt->seglen)
+						encapsulate_intcp(so, elt->data, elt->seglen, tcppacket)
+						send_tcp(so, tcppacket, elt->seglen + TCPHDRSIZE)
+						gettimeofday(&elt->lastsent, NULL)
+				}
+			}
+
+			if(unsent_bytes){
+				
+			}
+
+on A: tcp_handler receives an ACK
+		tcp_handler()
+		if(SYN && !ACK)
+		else
+			if(SYN && ACK)
+			else 
+				if(ACK)
+				so we just got an ACK, possibly piggybacked on data--but we're only concerned about
+				the ACK at the moment--what do we do?
+				1- if this acknowledges new bytes, delete things from the retransmission queue
+				and update LBA (which is only kept track of in the sequence number space, meaning
+				you only need to update ack_seq
+				2- if this is a duplicate ack, keep count of it and retransmit if necessary
+
+				if(there is anything unacknowledged):
+				
+				
+
+				
+
+
+
+
 [Side Scenarios]
 Packets out of order
 Packets lost
@@ -313,7 +371,9 @@ Silly Window Syndrome
 [DEFINITIONS]
 
 $macro definition
-	#define MSS //TODO maximum segment size
+	#define MSS 
+
+	#define TIMEOUT 1
 
 	#define CB circular_buffer //shortens function calls for circular buffer
 	#define CB_INIT circular_buffer_init

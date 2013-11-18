@@ -7,7 +7,6 @@
  */
 
 #include "circular_buffer.h"
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -68,9 +67,9 @@ void circular_buffer_free(circular_buffer_t **cbuf)
 {
     // Only continue if the buffer is not null
     if (*cbuf != 0) {
-	free((*cbuf)->data);
-	free (*cbuf);
-	*cbuf = 0;
+			free((*cbuf)->data);
+			free (*cbuf);
+			*cbuf = 0;
     }
 }
 
@@ -188,8 +187,6 @@ int circular_buffer_write(circular_buffer_t *cbuf, const void *buf, size_t count
 }
 int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 {
-		printf("circular-buffer-read\n");
-
     if (cbuf == NULL) {
         return -1;
     }
@@ -239,7 +236,6 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 	    }
 	    
 	    // Update size, set return value and wake up someone waiting to write data.
-			printf("About to break\n");
 	    cbuf->size -= length_to_read;
 	    ret = length_to_read;
 	    pthread_cond_signal(&cbuf->cond_write);
@@ -264,7 +260,6 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
 #endif
     
     pthread_mutex_unlock(&cbuf->pointer_lock);
-		printf("asdf\n");
     return ret;
 }
 

@@ -3,6 +3,7 @@
 #include "csupport/ipsum.h"
 #include "csupport/colordefs.h"
 #include "csupport/uthash.h"
+#include "csupport/utlist.h"
 #include "csupport/bqueue.h"
 #include "csupport/circular_buffer.h"
 #include <stdlib.h>
@@ -54,11 +55,12 @@
 #define TCP 6
 
 #define REFRESH_TIME	15
+#define TIMEOUT 5 //timeout macro for TCP retransmission
 
 //TCP macros
 #define MSS 1400
 #define MAXPORT 65535 
-#define MAXSEQ 100
+#define MAXSEQ 10
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
 #define CBT circular_buffer_t

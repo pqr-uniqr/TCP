@@ -137,20 +137,23 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 }
 
 
+//malloc and initialize sending and receiving window
 void init_windows(socket_t *so){
 	so->sendw = malloc(sizeof(sendw_t));
 	so->recvw = malloc(sizeof(recvw_t));
-	CB_INIT(&so->sendw->buf, MAXSEQ*2);
-	CB_INIT(&so->recvw->buf, MAXSEQ*2);
-	unsigned char *send_start = so->sendw->buf->write_pointer;
+	CB_INIT(&so->sendw->buf, MAXSEQ/2);
+	CB_INIT(&so->recvw->buf, MAXSEQ/2);
+	//unsigned char *send_start = so->sendw->buf->write_pointer;
 	unsigned char *recv_start = so->recvw->buf->write_pointer;
-	so->sendw->lbw = send_start;
-	so->sendw->lbs = send_start;
-	so->sendw->lba = send_start;
+	//so->sendw->lbw = send_start; 
+	//so->sendw->lbs = send_start;
+	//so->sendw->lba = so->myseq;
+	so->sendw->retrans_q_head = NULL;
 
 	so->recvw->lbc = recv_start;
 	so->recvw->nbe = recv_start + 1;
 	so->recvw->lbr = recv_start;
+
 	return;
 }
 
@@ -161,7 +164,6 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	int cap = CB_GETCAP(so->sendw->buf);
 	int ret = CB_WRITE(so->sendw->buf, buf, MIN(cap, nbyte));
 	printf("%d written to the buffer\n", ret);
-	so->sendw->lbw = so->sendw->lbw + ret;
 	return ret;
 }
 
@@ -195,21 +197,21 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									socket->myseq, 0,
 									0,1,0,0,0,
-									MAXSEQ);
+									MAXSEQ/2); //half the max sequence number
 			break;
 		case 2 :
 			//second of 3WH
 			header =  tcp_mastercrafter(socket->myport, socket->urport,
 									(socket->myseq)++, socket->ackseq,
 									0,1,0,0,1,
-									MAXSEQ);
+									MAXSEQ/2);
 			break;
 		case 3 :
 			//third of 3WH
 			header =  tcp_mastercrafter(socket->myport, socket->urport,
 									++(socket->myseq), socket->ackseq, 
 									0,0,0,0,1,
-									MAXSEQ);
+									MAXSEQ/2);
 	}
 	//send the packet
 	tcp_hton(header);
