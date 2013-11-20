@@ -96,9 +96,11 @@ int destroy_socket(int socket){
 */
 void print_sockets(){
 	socket_t *sock, *temp;
+	printf("\nSOCKETS----------------------------------------------\n");
 	HASH_ITER(hh1, fd_list, sock, temp){
 		print_socket(sock);
 	}
+	printf("-----------------------------------------------------\n\n");
 }
 
 void print_socket(socket_t *s){
@@ -107,7 +109,7 @@ void print_socket(socket_t *s){
 	inet_ntop(AF_INET, &s->myaddr, me, INET_ADDRSTRLEN);
 	inet_ntop(AF_INET, &s->uraddr, her, INET_ADDRSTRLEN);
 
-	printf("SOCKET ID: %d \nconnection{%s (this node) (port: %d)\n <--%s--> (port: %d) %s }\n", s->id,me,s->myport,state_names[s->state].name,s->urport,her);
+	printf("SOCKET ID: %d \nconnection{ %s (this node) (port: %d)\n <--%s--> (port: %d) %s }\n", s->id,me,s->myport,state_names[s->state].name,s->urport,her);
 	printf("		(at seqnum %d) 		(at seqnum %d)\n",s->myseq,s->ackseq);
 }
 
@@ -151,11 +153,11 @@ void socket_flush(socket_t *so){
 		sent += send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
 
 		//store transmitted segment in retransmission queue with timestamp
-		retrans_t *el = malloc(sizeof(retrans_t));
+		seg_t *el = malloc(sizeof(seg_t));
+		gettimeofday(&el->lastsent, NULL);
 		DL_APPEND(sendw->retrans_q_head, el);
 		el->seqnum = so->myseq;
 		el->seglen = tosend;
-		gettimeofday(&el->lastsent, NULL);
 		el->data = payload;
 		el->retrans_count = 0;
 
@@ -229,28 +231,56 @@ tcphdr *tcp_craft_ack(socket_t *so){
 }
 
 
-
 void *buf_mgmt(void *arg){
 	
 	int s=(int)arg;
 	socket_t *so = fd_lookup(s);
 	sendw_t *sendw = so->sendw;
 	int unsent_bytes, unacked_segs;
-	retrans_t *elt, *temp;
-	struct timeval nowt;
+	seg_t *elt, *temp;
+	struct timeval nowt, last_probe;
 
 	while(1){
 
 		if(!so->adwindow)	continue; //receiver window closed--probe
 		//TODO lock the window
 		unsent_bytes = CB_SIZE(sendw->buf);
-		DL_COUNT(sendw->retrans_q_head,elt,unacked_segs);
+		DL_COUNT(sendw->retrans_q_head, elt, unacked_segs);
 		uint32_t fwind = so->adwindow;
 		//unacked_bytes = (so->myseq-1)- sendw->lba;
 
 		//there's unacked bytes -- should we retransmit them?
 		if(unacked_segs){
 			fwind -= sendw->retrans_q_head->seqnum;
+
+			elt = sendw->retrans_q_head->prev;
+			
+			DL_FOREACH_SAFE(sendw->retrans_q_head,elt,temp){
+				uint32_t seqnum = elt->seqnum;
+				if(seqnum == sendw->acked) break;
+
+				double samplertt = 0;
+				if(sendw->acked == seqnum + elt->seglen){
+					samplertt = sendw->acked_at.tv_sec - elt->lastsent.tv_sec +
+					(sendw->acked_at.tv_usec - elt->lastsent.tv_usec) / 1000000.0;
+				}
+
+				#ifdef DEBUG
+				printf("SEGMENT ACKNOWLEDGED:\n");
+				printf("	segment [%d ---%d bytes--- %d] \n",elt->seqnum, elt->seglen,
+							elt->seqnum+elt->seglen-1);
+				printf("	acked in %f seconds (transmitted %d times)\n", samplertt, 
+					elt->retrans_count+1);
+				char *data = elt->data;
+				data[elt->seglen] = '\0';
+				printf("	data in segment '%s'\n",data);
+				#endif
+
+				free(elt->data);
+				DL_DELETE(sendw->retrans_q_head, elt);
+				if(seqnum + elt->seglen == sendw->acked) break;
+			}
+
 			DL_FOREACH(sendw->retrans_q_head, elt){
 				gettimeofday(&nowt, NULL);
 				double now = nowt.tv_sec + (nowt.tv_usec/1000000.0);

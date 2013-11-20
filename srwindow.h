@@ -2,33 +2,27 @@
 #include "tcputil.h"
 
 
-typedef struct retransmission_segment{
+typedef struct segment{
 	void *data;
 	uint32_t seqnum;
 	uint32_t seglen;
 	int retrans_count;
 	struct timeval lastsent;
 	//for UTLIST
-	struct retransmission_segment *next, *prev;
-} retrans_t;
-
+	struct segment *next, *prev;
+} seg_t;
 
 typedef struct sending_window{
 	CBT *buf;
-	retrans_t *retrans_q_head;
+	seg_t *retrans_q_head;
+	uint32_t acked;
+	struct timeval acked_at;
 	pthread_mutex_t lock; //TODO use mutex
 } sendw_t;
 
-
 typedef struct receiving_window{
 	CBT *buf;
-	unsigned char *lbc;
-	unsigned char *nbe;
-	unsigned char *lbr;
+	seg_t *oor_q_head;
 	pthread_mutex_t lock;
 } recvw_t;
 
-
-//sendfile small02.txt 10.116.89.157 10
-//accept 10
-//recvfile /dev/stdout/

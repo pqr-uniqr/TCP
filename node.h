@@ -27,7 +27,7 @@ void test_checksum(const char *line);
 
 int v_read_all(int s, void *buf, size_t bytes_requested);
 
-
+int seqcmp(uint32_t seq1, uint32_t seq2);
 
 
 /*  

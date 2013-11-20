@@ -1,4 +1,6 @@
-PSEUDOCODE for TCP - Sliding Window
+PSEUDOCODE for TCP - Sliding Window (with flow control, retransmission
+but no capability to handle out of order packet)
+
 
 [new TODOs and NOTES]
 PRINCIPLE: Whenever possible, don't pass malloc-ed data down or up
@@ -15,6 +17,12 @@ PRINCIPLE: Sender must limit the amount of unacked bytes to adwindow at any poin
 PRINCIPLE: LBA is always the sequence number of the first element in the retransmission q
 		-->if the retransmission queue is empty, LBA == LBS
 
+DO: race condition--ACK arriving before packet is added to retransmission queue
+					NOT A BLOCKING ISSUE: move on
+					But the solution is this: keep a running LBA that is updated
+					by the main thread and referenced by the socket thread
+					HOWEVER, this might conflict with the "myseq-only wraparound" solution
+
 DO: wrap around
 	initial capacity should be registered as the corresponding window's max sequence number
 	receiver should be able to wrap ACK around
@@ -27,11 +35,6 @@ DO: hton and ntoh for data
 DO: v_read_all behavior (small fix)
 
 DO: locking data structure: CB already has a lock--should i just expand CB
-
-DO: race condition--ACK arriving before packet is added to retransmission queue
-					NOT A BLOCKING ISSUE: move on
-					But the solution is this: when the main thread receives an ACK,
-					it is going to 
 
 #: Sequence number has to be 2*window size
 
