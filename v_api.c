@@ -74,9 +74,12 @@ int v_accept(int socket, struct in_addr *node){
 	nso->urport = ((tcphdr *)request)->sourceport;
 
 	nso->ackseq= ++(((tcphdr *)request)->seqnum);//mani chanhed ++ to +1 
-	
+
 	nso->myseq = rand() % MAXSEQ;
-	
+	#ifdef SIMPLESEQ
+	nso->myseq = 0;
+	#endif
+
 	set_socketstate(nso, SYN_RCVD);
 
 	nso->adwindow = ((tcphdr*)request)->adwindow;
@@ -119,9 +122,9 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	interface_t *i = get_nexthop(so->uraddr);
 	so->myaddr = i->sourcevip;
 	so->myseq = rand() % MAXSEQ;
-	//#ifdef SIMPLESEQ
-	//so->myseq = 0;
-	//#endif
+	#ifdef SIMPLESEQ
+	so->myseq = 0;
+	#endif
 	set_socketstate(so, SYN_SENT);
 	init_windows(so);
 
@@ -149,15 +152,13 @@ void init_windows(socket_t *so){
 	CB_INIT(&so->sendw->buf, WINSIZE);
 	CB_INIT(&so->recvw->buf, WINSIZE);
 	//unsigned char *send_start = so->sendw->buf->write_pointer;
-	unsigned char *recv_start = so->recvw->buf->write_pointer;
+	//unsigned char *recv_start = so->recvw->buf->write_pointer;
 	//so->sendw->lbw = send_start; 
 	//so->sendw->lbs = send_start;
 	//so->sendw->lba = so->myseq;
 	so->sendw->retrans_q_head = NULL;
-
-	so->recvw->lbc = recv_start;
-	so->recvw->nbe = recv_start + 1;
-	so->recvw->lbr = recv_start;
+	so->sendw->acked = 1; //TODO make this work for non SIMPLESEQ case
+	so->recvw->oor_q_head = NULL;
 
 	return;
 }
@@ -181,7 +182,6 @@ int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	if(toread <= 0) return 0;
 	printf("v_read\n");
 	int ret = CB_READ(recvw->buf, buf, toread);
-	recvw->lbr += toread;
 	so->adwindow = CB_GETCAP(recvw->buf);
 	return ret;
 }
@@ -228,7 +228,7 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 	//hton* all fields except the checksum. Checksum is calculated after this
 	tcp_hton(header);
 
-	tcp_print_packet_byte_ordered(header);
+	//tcp_print_packet_byte_ordered(header);
 
 	//TODO : you know what!
 	uint32_t total_length = 20;

@@ -59,10 +59,10 @@
 #define TCP 6
 
 #define REFRESH_TIME	15
-#define TIMEOUT 5 //timeout macro for TCP retransmission
+#define TIMEOUT 3//timeout macro for TCP retransmission
 
 //TCP macros
-#define MSS 1400
+#define MSS 45
 #define MAXPORT 65535 
 
 #define WINDOW_SIZE 65535 //mani
