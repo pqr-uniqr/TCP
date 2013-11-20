@@ -48,7 +48,7 @@ uint16_t circular_buffer_get_capacity(circular_buffer_t *cbuf);
  */
 uint16_t circular_buffer_get_size(circular_buffer_t *cbuf);
  
-/**
+/*
  * Checks if the buffer is empty.
  */
 int circular_buffer_is_empty(circular_buffer_t *cbuf);

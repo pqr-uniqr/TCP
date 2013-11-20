@@ -62,6 +62,6 @@ void set_socketstate(socket_t *so, int state);
 void socket_flush(socket_t *so);
 int send_tcp(socket_t *so, char *tcppacket, int size);
 tcphdr *tcp_craft_ack(socket_t *so);
-void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet);
-void buf_mgmt(void *arg);
+void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uint32_t seqnum);
+void *buf_mgmt(void *arg);
 void p_inc(int by, unsigned char *p);

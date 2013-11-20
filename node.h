@@ -1,11 +1,11 @@
 #include "v_api.h"
 
-void rip_handler(const char *, interface_t *inf, int received_bytes);
-void ip_handler(const char *, interface_t *inf, int received_bytes);
-void tcp_handler(const char *, interface_t *inf, int received_bytes);
+void rip_handler(const char *packet, interface_t *inf, int nothing2);
+void ip_handler(const char *packet, interface_t *nothing, int received_bytes);
+void tcp_handler(const char *packet, interface_t *nothing, int nothing2);
 
 void decrement_ttl();
-void regular_update(int *timer);
+void regular_update();
 
 int rt_init(); //TODO this can be incorporated into interface.
 void broadcast_rip_table();

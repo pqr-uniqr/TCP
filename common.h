@@ -3,6 +3,7 @@
 #include "csupport/ipsum.h"
 #include "csupport/colordefs.h"
 #include "csupport/uthash.h"
+#include "csupport/utlist.h"
 #include "csupport/bqueue.h"
 #include "csupport/circular_buffer.h"
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
@@ -21,6 +23,9 @@
 #include <stdbool.h>
 #include <mcheck.h>
 #include <signal.h>
+
+
+#define DEBUG
 
 //node.h defines the MACROS
 #define INFINITY 	16
@@ -54,6 +59,7 @@
 #define TCP 6
 
 #define REFRESH_TIME	15
+#define TIMEOUT 5 //timeout macro for TCP retransmission
 
 //TCP macros
 #define MSS 1400
@@ -63,7 +69,9 @@
 #define ZERO 0 //mani
 #define TCP_PSEUDO_HDR_SIZE 12
 
-#define MAXSEQ 100
+#define MAXSEQ (unsigned) (65535 * 2)
+#define WINSIZE 100
+
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
 #define CBT circular_buffer_t
