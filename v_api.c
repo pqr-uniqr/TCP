@@ -224,7 +224,7 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 	if (header == NULL) {
 		printf("\tWARNING : Could not make TCP header\n");
 		return;
-
+	}
 	//hton* all fields except the checksum. Checksum is calculated after this
 	tcp_hton(header);
 
@@ -239,7 +239,6 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 		printf("\t ERROR : something went wrong with checksum\n");
 		return;
 	}
-
 
 	//TODO : error checking
 	interface_t *nexthop = get_nexthop(socket->uraddr);

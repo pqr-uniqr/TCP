@@ -573,7 +573,7 @@ void recv_cmd(const char *line){
 }
 
 
-void regular_update(int *updateTimer){
+void regular_update(){
 	
 	time_t now = time(NULL);
 	if( (now - lastRIPupdate) > 2){
