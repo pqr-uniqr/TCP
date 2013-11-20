@@ -51,6 +51,10 @@ int v_listen(int socket){
 	return 0;
 }
 
+int v_close(int sth) {
+	return 0;
+}
+
 
 int v_accept(int socket, struct in_addr *node){
 
@@ -172,7 +176,6 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	return ret;
 }
 
-
 int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	socket_t *so = fd_lookup(socket);
 	if(so==NULL) return 0; //no such socket
@@ -186,7 +189,12 @@ int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	return ret;
 }
 
-
+/**
+* TODO : take the pseudo header function out. NOTE : make sure it is generic
+* enough to be called by handshake funcs AND send data funcs.
+* TODO : 3rd shake might have data
+* TODO : RST
+*/
 void tcp_send_handshake(int gripnum, socket_t *socket){
 
 	tcphdr *header = NULL;
@@ -198,52 +206,67 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 
 		case 1:
 			header = tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, 0,
-									0,1,0,0,0,
-									WINSIZE); //half the max sequence number
+									socket->myseq, 0,0,1,0,0,0,MAXSEQ); //half the max sequence number
+			
 			break;
 		case 2:
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									(socket->myseq)++, socket->ackseq,
-									0,1,0,0,1,
-									MAXSEQ);
+									0,1,0,0,1,MAXSEQ);
 
 			break;
 
 		case 3://maybe SYN set?
 			header = header =  tcp_mastercrafter(socket->myport, socket->urport,
 									++(socket->myseq), socket->ackseq, 
-									0,0,0,0,1,
-									MAXSEQ);
+									0,0,0,0,1,MAXSEQ);
 			break;
 
 		default:
 			printf("\t WARNING : Unknown shake!\n");
+			return;
 	}
 
+	//0. make sure TCP header is not NULL
 	if (header == NULL) {
 		printf("\tWARNING : Could not make TCP header\n");
 		return;
 	}
-	//hton* all fields except the checksum. Checksum is calculated after this
+	
+
+	struct pseudo_tcpp *tcp_packet = (uint16_t *)malloc(sizeof(struct pseudo_tcpp));
+	memset(tcp_packet, 0x0, sizeof(struct pseudo_tcpp));
+
+	//1. fill the pseudiheader part
+	((uint32_t *)tcp_packet)[0] = socket->myaddr;
+	((uint32_t *)tcp_packet)[1] = socket->uraddr;
+	((uint8_t *)tcp_packet)[9] = (uint8_t)TCP;
+	((uint16_t *)tcp_packet)[5] = ntohs((uint16_t)TCPHDRSIZE);
+
+
+	//2. fill the header 
 	tcp_hton(header);
+	memcpy(&tcp_packet->tcp, header, TCPHDRSIZE);
 
-	tcp_print_packet_byte_ordered(header);
+	//3. data (NONE)
+	//TODO : 3rd handshake could have data. 
+	memset(tcp_packet->payload, 0, 1024);
 
-	//TODO : you know what!
-	uint32_t total_length = 20;
+	//4. checksum
+	uint16_t checksum = tcp_checksum(tcp_packet, TCPHDRSIZE+12);
+	
 
-	//checksum : all good now
-	tcp_add_checksum(header, total_length, socket->myaddr, socket->uraddr, TCP);
+	//5. set the checksum in the TCP header
+	header->check = checksum;
 	if (header->check == 0) {
 		printf("\t ERROR : something went wrong with checksum\n");
 		return;
 	}
 
-	//TODO : error checking
+	//6. TODO : error checking
 	interface_t *nexthop = get_nexthop(socket->uraddr);
 
-	//TODO : space for data?
+	//TODO : packet top pass to ip
 	char *packet = (char *)malloc(TCPHDRSIZE+IPHDRSIZE);
 
 	if (packet == NULL) {
@@ -251,10 +274,14 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 		return;
 	}
 
+	//7. copy the TCP header to ip packet
 	memset(packet, 0, TCPHDRSIZE+IPHDRSIZE);
-	//tcp_hton(header); //bad bad bad (learnt the hard way)
+	memcpy(packet, header, TCPHDRSIZE);
+
+	//8. NO data, so you are done : pass to ip
 	encapsulate_inip(socket->myaddr,socket->uraddr,(uint8_t)TCP,header, TCPHDRSIZE, &packet);
-	//printf("PACKET SIZE %d\n", TCPHDRSIZE);
+
+	//9. TCP/IP packet all set, sending time
 	send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
 
 	return;

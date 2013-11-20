@@ -61,6 +61,7 @@ int v_read_all(int s, void *buf, size_t bytes_requested){
 
   bytes_read = 0;
   while (bytes_read < bytes_requested){
+    
     ret = v_read(s, buf + bytes_read, bytes_requested - bytes_read);
     if (ret == -EAGAIN){
       continue;

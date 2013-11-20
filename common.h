@@ -91,6 +91,14 @@
 
 
 
+//mani
+#define LINE_MAX 50
+#define FILE_BUF_SIZE	1024
+
+
+
+
+
 
 //uint32_t route_lookup(uint32_t final_dest); DEPRECATED
 //rtu_routing_entry *find_route_entry(uint32_t id); DEPRECATED

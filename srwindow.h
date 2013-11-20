@@ -29,3 +29,6 @@ typedef struct receiving_window{
 } recvw_t;
 
 
+//sendfile small02.txt 10.116.89.157 10
+//accept 10
+//recvfile /dev/stdout/

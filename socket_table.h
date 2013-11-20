@@ -26,6 +26,7 @@ typedef struct socket{
 
 	UT_hash_handle hh1; //hashed by id (fd number)
 	UT_hash_handle hh2; //hashed by compound key {urport,myport,uraddr} --order matters
+	
 } socket_t;
 
 

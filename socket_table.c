@@ -18,6 +18,17 @@
 
 #include "socket_table.h"
 
+struct pseudo_tcp
+{
+	unsigned saddr, daddr;
+	unsigned char mbz;
+	unsigned char ptcl;
+	unsigned short tcpl;
+	struct tcphdr tcp;
+	char payload[1024];
+};
+
+
 struct {
 	const char *name;
 } state_names[] = {
@@ -114,17 +125,28 @@ void set_socketstate(socket_t *so, int state){
 #endif
 }
 
+
 void socket_flush(socket_t *so){
+
 	sendw_t *sendw = so->sendw;
 	uint32_t tosend;
 	int sent = 0;
 
 	while(!CB_EMPTY(sendw->buf)){
+		
 		//read and send data
 		tosend = MIN(MSS-TCPHDRSIZE-IPHDRSIZE, CB_SIZE(sendw->buf));
+
+		//data
 		unsigned char *payload = malloc(tosend);
+
+		//copy data from CB to payload
 		CB_READ(sendw->buf, payload, tosend);
+		
 		char *tcppacket = malloc(TCPHDRSIZE+tosend);
+		memset(tcppacket, 0, TCPHDRSIZE+tosend); 
+
+		//fill up the packet
 		encapsulate_intcp(so, payload, tosend, tcppacket, so->myseq);
 		sent += send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
 
@@ -140,6 +162,7 @@ void socket_flush(socket_t *so){
 		so->myseq = (so->myseq + tosend) % MAXSEQ;
 		//update myseq and potentially wrap around
 		free(tcppacket);
+
 	}	
 
 #ifdef DEBUG
@@ -147,6 +170,49 @@ void socket_flush(socket_t *so){
 #endif
 }
 
+//for making data packet
+void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uint32_t seqnum){
+
+	//printf("seqnum at encapsulate_inip %d\n", seqnum);
+	tcphdr *header = tcp_mastercrafter(so->myport, so->urport,
+			seqnum, so->ackseq,
+			0,0,0,0,1,
+			so->adwindow);
+
+	if (header == NULL) {
+		printf("\tWARNING : Could not make TCP header\n");
+		return;
+	}
+
+	struct pseudo_tcp *p_tcp = (uint16_t *)malloc(sizeof(struct pseudo_tcp));
+	memset(p_tcp, 0x0, sizeof(struct pseudo_tcp));
+
+	//2. fill the header
+	tcp_hton(header);
+	memcpy(&p_tcp->tcp, header, TCPHDRSIZE);
+
+	//1. fill the pseudiheader part
+	((uint32_t *)p_tcp)[0] = so->myaddr;
+	((uint32_t *)p_tcp)[1] = so->uraddr;
+	((uint8_t *)p_tcp)[9] = (uint8_t)TCP;
+	((uint16_t *)p_tcp)[5] = ntohs((uint16_t)TCPHDRSIZE+(uint16_t)datasize);
+
+	//3. data
+	memcpy(p_tcp->payload, data, datasize);
+
+	//4. checksum
+	uint16_t checksum = tcp_checksum(p_tcp, TCPHDRSIZE+datasize+12);
+  	header->check = checksum;
+	if (header->check == 0) {
+		printf("\t ERROR : something went wrong with checksum\n");
+		return;
+	}
+
+	//5. fill TCP part
+	memcpy(packet, header, TCPHDRSIZE);
+	memcpy(packet+TCPHDRSIZE, data, datasize);
+	return;
+}
 
 int send_tcp(socket_t *so, char *tcppacket, int size){
 	interface_t *nexthop = get_nexthop(so->uraddr);
@@ -163,21 +229,9 @@ tcphdr *tcp_craft_ack(socket_t *so){
 }
 
 
-//for making data packet
-void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uint32_t seqnum){
-	printf("seqnum at encapsulate_inip %d\n", seqnum);
-	tcphdr *header = tcp_mastercrafter(so->myport, so->urport,
-			seqnum, so->ackseq,
-			0,0,0,0,1,
-			so->adwindow);
-	tcp_hton(header);
-	memcpy(packet, header, TCPHDRSIZE);
-	memcpy(packet+TCPHDRSIZE, data, datasize);
-	return;
-}
-
 
 void *buf_mgmt(void *arg){
+	
 	int s=(int)arg;
 	socket_t *so = fd_lookup(s);
 	sendw_t *sendw = so->sendw;
@@ -186,6 +240,7 @@ void *buf_mgmt(void *arg){
 	struct timeval nowt;
 
 	while(1){
+
 		if(!so->adwindow)	continue; //receiver window closed--probe
 		//TODO lock the window
 		unsent_bytes = CB_SIZE(sendw->buf);

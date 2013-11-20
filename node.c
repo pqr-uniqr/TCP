@@ -2,10 +2,15 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 //undefine to see no printf()s
 #define DEBUG
 
+struct sendrecvfile_arg {
+  int s;
+  int fd;
+};
 
 int maxfd;
 list_t  *interfaces, *routes;
@@ -43,38 +48,14 @@ struct {
 	{"up", up_interface}, 
   	{"send", send_cmd}, 
   	{"recv", recv_cmd},
-  	{"c", test_checksum},
+  	{"sendfile", sendfile_cmd},
+  	{"recvfile", recvfile_cmd},
+  	//{"close", close_cmd},
   /*
-	{"sendfile", sendfile_cmd},
-  {"recvfile", recvfile_cmd},
   {"shutdown", shutdown_cmd},
-  {"close", close_cmd} */
+  */
 };
 
-void test_checksum(const char *line) {
-
-	char src_ip[CMDBUFSIZE];
-	char dest_ip[CMDBUFSIZE];
-	//struct in_addr src_addr, dest_addr;
-	uint16_t src_port, dest_port;
-	int ret;
-	int s;
-	  
-	ret = sscanf(line, "c %s %d %s %" SCNu16, src_ip, &src_port, dest_ip, &dest_port);
-	if (ret != 4){
-		fprintf(stderr, "syntax error (usage: connect [source ip address] [source port]	[destination ip address] [destination port])\n");
-	    return;
-	}
-	printf("SRC_IP = %s , SRC_PORT %d , DEST_IP = %s , DEST_PORT = %d \n", src_ip, src_port, dest_ip, dest_port);
-/*
-	  //ret = inet_aton(ip_string, &ip_addr);
-		ret = inet_pton(AF_INET,ip_string,&ip_addr);
-	  if (ret == 0){
-	    fprintf(stderr, "syntax error (malformed ip address)\n");
-	    return;
-	  }
-	  */
-}
 
 int main ( int argc, char *argv[]) {
 
@@ -162,7 +143,245 @@ int main ( int argc, char *argv[]) {
 
 	return EXIT_SUCCESS;
 }
+void *recvfile_thr_func(void *arg){
 
+  int s;
+  int s_data;
+  int fd;
+  int ret;
+  struct sendrecvfile_arg *thr_arg;
+  int bytes_read;
+  char buf[FILE_BUF_SIZE];
+
+  thr_arg = (struct sendrecvfile_arg *)arg;
+  s = thr_arg->s;
+  fd = thr_arg->fd;
+  free(thr_arg);
+
+  s_data = v_accept(s, NULL);
+  if (s_data < 0){
+    fprintf(stderr, "v_accept() error: %s\n", strerror(-s_data));
+    return NULL;
+  }
+  ret = v_close(s);
+  if (ret < 0){
+    fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
+    return NULL;
+  }
+
+  while ((bytes_read = v_read(s_data, buf, FILE_BUF_SIZE)) != 0){
+    if (bytes_read < 0){
+      fprintf(stderr, "v_read() error: %s\n", strerror(-bytes_read));
+      break;
+    }
+    ret = write(fd, buf, bytes_read);
+    if (ret < 0){
+      fprintf(stderr, "write() error: %s\n", strerror(errno));
+      break;
+    }
+  }
+
+  ret = v_close(s_data);
+  if (ret < 0){
+    fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
+  }
+  ret = close(fd);
+  if (ret == -1){
+    fprintf(stderr, "close() error: %s\n", strerror(errno));
+  }
+
+  printf("recvfile on socket %d done", s_data);
+  return NULL;
+}
+void recvfile_cmd(const char *line){
+
+  int ret;
+  char filename[LINE_MAX];
+  uint16_t port;
+  int s;
+  struct in_addr any_addr;
+  pthread_t recvfile_thr;
+  pthread_attr_t thr_attr;
+  struct sendrecvfile_arg *thr_arg;
+  int fd;
+
+  ret = sscanf(line, "recvfile %s %" SCNu16, filename, &port);
+  if (ret != 2){
+    fprintf(stderr, "syntax error (usage: recvfile [filename] [port])\n");
+    return;
+  }
+
+  s = v_socket();
+  if (s < 0){
+    fprintf(stderr, "v_socket() error: %s\n", strerror(-s));
+    return;
+  }
+  any_addr.s_addr = 0;
+  ret = v_bind(s, any_addr.s_addr, port);
+  if (ret < 0){
+    fprintf(stderr, "v_bind() error: %s\n", strerror(-ret));
+    return;
+  }
+  ret = v_listen(s);
+  if (ret < 0){
+    fprintf(stderr, "v_listen() error: %s\n", strerror(-ret));
+    return;
+  }
+  fd = open(filename, O_WRONLY | O_CREAT);
+  if (fd == -1){
+    fprintf(stderr, "open() error: %s\n", strerror(errno));
+  }
+  thr_arg = (struct sendrecvfile_arg *)malloc(sizeof(struct sendrecvfile_arg));
+  assert(thr_arg);
+  thr_arg->s = s;
+  thr_arg->fd = fd;
+  ret = pthread_attr_init(&thr_attr);
+  assert(ret == 0);
+  ret = pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
+  assert(ret == 0);
+  ret = pthread_create(&recvfile_thr, &thr_attr, recvfile_thr_func, thr_arg);
+  if (ret != 0){
+    fprintf(stderr, "pthread_create() error: %s\n", strerror(errno));
+    return;
+  }
+  ret = pthread_attr_destroy(&thr_attr);
+  assert(ret == 0);
+
+  return;
+}
+
+
+
+int v_write_all(int s, const void *buf, size_t bytes_requested){
+  int ret;
+  size_t bytes_written;
+
+  bytes_written = 0;
+  while (bytes_written < bytes_requested){
+    ret = v_write(s, buf + bytes_written, bytes_requested - bytes_written);
+    if (ret == -EAGAIN){
+      continue;
+    }
+    if (ret < 0){
+      return ret;
+    }
+    if (ret == 0){
+      fprintf(stderr, "warning: v_write() returned 0 before all bytes written\n");
+      return bytes_written;
+    }
+    bytes_written += ret;
+  }
+  return bytes_written;
+}
+
+
+void *sendfile_thr_func(void *arg){
+
+  int s;
+  int fd;
+  int ret;
+  struct sendrecvfile_arg *thr_arg;
+  int bytes_read;
+  char buf[FILE_BUF_SIZE];
+
+  thr_arg = (struct sendrecvfile_arg *)arg;
+  s = thr_arg->s;
+  fd = thr_arg->fd;
+  free(thr_arg);
+
+  while ((bytes_read = read(fd, buf, sizeof(buf))) != 0){
+    if (bytes_read == -1){
+      fprintf(stderr, "read() error: %s\n", strerror(errno));
+      break;
+    }
+    ret = v_write_all(s, buf, bytes_read);
+
+    printf("File contents being sent\n %s\n", buf);
+
+    if (ret < 0){
+      fprintf(stderr, "v_write() error: %s\n", strerror(-ret));
+      break;
+    }
+    if (ret != bytes_read){
+      break;
+    }
+  }
+
+  ret = v_close(s);
+  if (ret < 0){
+    fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
+  }
+  ret = close(fd);
+  if (ret == -1){
+    fprintf(stderr, "close() error: %s\n", strerror(errno));
+  }
+
+  printf("sendfile on socket %d done\n", s);
+  return NULL;
+}
+
+//sendfile testfiles/small.01.txt 10.116.89.157 1000
+//recvfile /dev/stdout 1000
+void sendfile_cmd(const char *line){
+
+  int ret;
+  char filename[LINE_MAX];
+  char ip_string[LINE_MAX];
+  struct in_addr ip_addr;
+  uint16_t port; 
+  int s;
+  int fd;
+  struct sendrecvfile_arg *thr_arg;
+  pthread_t sendfile_thr;
+  pthread_attr_t thr_attr;
+
+  ret = sscanf(line, "sendfile %s %s %" SCNu16, filename, ip_string, &port);
+  if (ret != 3){
+    fprintf(stderr, "syntax error (usage: sendfile [filename] [ip address]"
+                                                  "[port])\n");
+    return;
+  }
+  ret = inet_aton(ip_string, &ip_addr);
+  if (ret == 0){
+    fprintf(stderr, "syntax error (malformed ip address)\n");
+    return;
+  }
+  
+  s = v_socket();
+  if (s < 0){
+    fprintf(stderr, "v_socket() error: %s\n", strerror(-s));
+    return;
+  }
+  
+  ret = v_connect(s, &ip_addr, port);
+  if (ret < 0){
+    fprintf(stderr, "v_connect() error: %s\n", strerror(-ret));
+    return;
+  }
+  
+  fd = open(filename, O_RDONLY);
+  printf("4\n");
+  if (fd == -1){
+    fprintf(stderr, "open() error: %s\n", strerror(errno));
+  }
+  thr_arg = (struct sendrecvfile_arg *)malloc(sizeof(struct sendrecvfile_arg));
+  assert(thr_arg);
+  thr_arg->s = s;
+  thr_arg->fd = fd;
+  ret = pthread_attr_init(&thr_attr);
+  assert(ret == 0);
+  ret = pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
+  assert(ret == 0);
+  ret = pthread_create(&sendfile_thr, &thr_attr, sendfile_thr_func, thr_arg);
+  if (ret != 0){
+    fprintf(stderr, "pthread_create() error: %s\n", strerror(errno));
+    return;
+  }
+  ret = pthread_attr_destroy(&thr_attr);
+  assert(ret == 0);
+
+  return;
+}
 
 
 int v_read_all(int s, void *buf, size_t bytes_requested){
@@ -199,10 +418,12 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 	memcpy(tcpheader, packet+IPHDRSIZE, TCPHDRSIZE);
 	
 	//checksum
-
 	tcp_ntoh(tcpheader);//necessary, is it though? (mani)
 
+	printf("\t Received tcp pacekt : \n");
 	tcp_print_packet(tcpheader);
+
+	//tcp_print_packet(tcpheader);
 	
 	//for first grip packet (SERVER)
 	if(SYN(tcpheader->orf) && !ACK(tcpheader->orf)){
@@ -254,6 +475,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 		//second grip (CLIENT)
 		if(SYN(tcpheader->orf) && ACK(tcpheader->orf)){
+
 			if(so->state != SYN_SENT){
 					free(tcpheader);
 					free(ipheader);
@@ -643,7 +865,7 @@ void *recv_thr_func(void *nothing){
 
 	//recv_thr_func start here -----------------------------
 
-while(1){
+	while(1){
 
 	regular_update();
 	decrement_ttl();

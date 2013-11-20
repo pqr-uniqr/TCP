@@ -12,15 +12,17 @@ typedef struct tcphdr{
 	uint16_t urggptr;
 } tcphdr;
 
-
-typedef struct pseudo_hdr {
-	uint32_t m_src;
-	uint32_t m_dest;
-	uint8_t m_z;
-	uint8_t m_p;
-	uint8_t m_l;
-} tcp_pseudo_hdr;
-
+// for checksum calculations (not verified yet) mani
+struct pseudo_tcpp
+{
+	uint32_t 		psdo_src_ip;
+	uint32_t 		psdo_dst_ip;
+	uint8_t 		psdo_mbz;
+	uint8_t 		psdo_prot;
+	uint16_t		psdo_tcpl;
+	struct tcphdr 	tcp;
+	char 			payload[1024];
+};
 
 //macros for tcputil.c -
 #define TCPHDRSIZE sizeof(struct tcphdr)
@@ -51,6 +53,5 @@ tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
 			bool fin, bool syn, bool rst, bool psh, bool ack,
 			uint16_t adwindow);
 void tcp_print_packet(tcphdr *header);
-int tcp_checksum(void *packet, uint16_t total_length, uint32_t src_ip, uint32_t dest_ip, uint16_t protocol);
-void tcp_add_checksum(void *packet, uint16_t total_length, uint32_t src_ip, uint32_t dest_ip, uint16_t protocol);
 void tcp_print_packet_byte_ordered(tcphdr *header);
+int tcp_checksum(void *packet, uint16_t total_length);
