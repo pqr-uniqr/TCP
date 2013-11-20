@@ -41,8 +41,9 @@ struct {
 	{"sockets", print_sockets},
 	{"down", down_interface},
 	{"up", up_interface}, 
-  {"send", send_cmd}, 
-  {"recv", recv_cmd}
+  	{"send", send_cmd}, 
+  	{"recv", recv_cmd},
+  	{"c", test_checksum},
   /*
 	{"sendfile", sendfile_cmd},
   {"recvfile", recvfile_cmd},
@@ -50,8 +51,30 @@ struct {
   {"close", close_cmd} */
 };
 
+void test_checksum(const char *line) {
 
-
+	char src_ip[CMDBUFSIZE];
+	char dest_ip[CMDBUFSIZE];
+	//struct in_addr src_addr, dest_addr;
+	uint16_t src_port, dest_port;
+	int ret;
+	int s;
+	  
+	ret = sscanf(line, "c %s %d %s %" SCNu16, src_ip, &src_port, dest_ip, &dest_port);
+	if (ret != 4){
+		fprintf(stderr, "syntax error (usage: connect [source ip address] [source port]	[destination ip address] [destination port])\n");
+	    return;
+	}
+	printf("SRC_IP = %s , SRC_PORT %d , DEST_IP = %s , DEST_PORT = %d \n", src_ip, src_port, dest_ip, dest_port);
+/*
+	  //ret = inet_aton(ip_string, &ip_addr);
+		ret = inet_pton(AF_INET,ip_string,&ip_addr);
+	  if (ret == 0){
+	    fprintf(stderr, "syntax error (malformed ip address)\n");
+	    return;
+	  }
+	  */
+}
 
 int main ( int argc, char *argv[]) {
 
@@ -76,7 +99,6 @@ int main ( int argc, char *argv[]) {
 		printf("ERROR : setup_interface failed\n");
 		exit(1);
 	}
-
 
 	if (rt_init() == -1) {
 		printf("ERROR : init_routing failed\n");
@@ -167,21 +189,25 @@ int v_read_all(int s, void *buf, size_t bytes_requested){
   return bytes_read;
 }
 
-
 //initial branching of cases will happen here!
 void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
+
 	struct iphdr *ipheader = malloc(sizeof(struct iphdr));
 	(void)decapsulate_fromip(packet, &ipheader);
-	
 	tcphdr *tcpheader = (tcphdr *) malloc(TCPHDRSIZE);
 	memcpy(tcpheader, packet+IPHDRSIZE, TCPHDRSIZE);
-	tcp_ntoh(tcpheader);
+	
+	//checksum
+
+	tcp_ntoh(tcpheader);//necessary, is it though? (mani)
 
 	tcp_print_packet(tcpheader);
-
+	
 	//for first grip packet (SERVER)
-	if(SYN(tcpheader->orf) &&!ACK(tcpheader->orf)){
+	if(SYN(tcpheader->orf) && !ACK(tcpheader->orf)){
+
 		sockets_on_port *sop = get_sockets_on_port(tcpheader->destport);
+
 		if(sop->listening_socket== NULL){
 			printf("we ain't listening on this port\n");
 			//TODO send an RST packet
@@ -193,6 +219,8 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 			return;
 		}
 
+		//TODO check the guy's checksum
+		
 		//TODO check if this guy is already connected
 
 		//make room for 2 uint32_t (IMPORTANT: uncast it from tcphdr)
@@ -201,6 +229,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 		memcpy(tbq+TCPHDRSIZE+SIZE32, &ipheader->daddr, SIZE32);
 		NQ(sop->listening_socket->q, tbq);
 		//goto cleanup;
+
 	} 
 
 	//if not first grip
@@ -323,6 +352,7 @@ void *accept_thr_func(void *arg){
   s = (int)arg;
 
   while (1){
+
     ret = v_accept(s, NULL);
     if (ret < 0){
       fprintf(stderr, "v_accept() error on socket %d: %s\n", s, strerror(-ret));
@@ -336,6 +366,7 @@ void *accept_thr_func(void *arg){
 
 
 void accept_cmd(const char *line){
+
   uint16_t port;
   int ret;
   struct in_addr any_addr;
@@ -344,6 +375,7 @@ void accept_cmd(const char *line){
   pthread_attr_t thr_attr;
 
   ret = sscanf(line, "accept %" SCNu16, &port);
+
   if (ret != 1){
     fprintf(stderr, "syntax error (usage: accept [port])\n");
     return;
@@ -385,6 +417,7 @@ void accept_cmd(const char *line){
   return;
 }
 void connect_cmd(const char *line){
+
   char ip_string[CMDBUFSIZE];
   struct in_addr ip_addr;
   uint16_t port;
@@ -498,7 +531,7 @@ void recv_cmd(const char *line){
 
 
 void regular_update(int *updateTimer){
-	printf("regular_update\n");
+	
 	time_t now = time(NULL);
 	if( (now - lastRIPupdate) > 2){
 		broadcast_rip_table();
@@ -553,6 +586,7 @@ void regular_update(int *updateTimer){
 
 
 void *recv_thr_func(void *nothing){
+	
 	struct timeval tv, tvcopy; 
 	char recvbuf[RECVBUFSIZE]; 
 	int received_bytes;
@@ -566,58 +600,58 @@ void *recv_thr_func(void *nothing){
 
 	//recv_thr_func start here -----------------------------
 
-while(1){
+	while(1){
 
-	regular_update(&lastRIPupdate);
-	decrement_ttl();
+		regular_update(&lastRIPupdate);
+		decrement_ttl();
 
-	readfds = masterfds;
-	tvcopy = tv;
+		readfds = masterfds;
+		tvcopy = tv;
 
-	if(select(maxfd+1, &readfds, NULL, NULL, &tvcopy) == -1){
-		perror("select()");
-		exit(1);
-	}
+		if(select(maxfd+1, &readfds, NULL, NULL, &tvcopy) == -1){
+			perror("select()");
+			exit(1);
+		}
 
-	for(curr = interfaces->head;curr!=NULL;curr=curr->next){
+		for(curr = interfaces->head;curr!=NULL;curr=curr->next){
 
-	i = (interface_t *)curr->data;
+		i = (interface_t *)curr->data;
 
-	if(FD_ISSET(i->sockfd, &readfds)){
+		if(FD_ISSET(i->sockfd, &readfds)){
 
-			if ((received_bytes = recvfrom(i->sockfd, recvbuf, RECVBUFSIZE, 0, &sender_addr, &addrlen)) == -1) {
-				perror("recvfrom()");
-				exit(1);
-			} 
-			//this link is down
-			if(i->status==DOWN){continue;}
+				if ((received_bytes = recvfrom(i->sockfd, recvbuf, RECVBUFSIZE, 0, &sender_addr, &addrlen)) == -1) {
+					perror("recvfrom()");
+					exit(1);
+				} 
+				//this link is down
+				if(i->status==DOWN){continue;}
 
-			ipheader = (struct iphdr *)malloc(sizeof(struct iphdr));
-			uint32_t destaddr = decapsulate_fromip(recvbuf, &ipheader);
+				ipheader = (struct iphdr *)malloc(sizeof(struct iphdr));
+				uint32_t destaddr = decapsulate_fromip(recvbuf, &ipheader);
 
-			//it's for me!
-			if(id_address(destaddr)){
-				unsigned j;
-				for(j=0;j<sizeof(protocol_handlers) /sizeof(protocol_handlers[0]);j++){
-					if(ipheader->protocol == protocol_handlers[j].protocol){
-						protocol_handlers[j].handler(recvbuf, i, received_bytes);
+				//it's for me!
+				if(id_address(destaddr)){
+					unsigned j;
+					for(j=0;j<sizeof(protocol_handlers) /sizeof(protocol_handlers[0]);j++){
+						if(ipheader->protocol == protocol_handlers[j].protocol){
+							protocol_handlers[j].handler(recvbuf, i, received_bytes);
+						}
 					}
 				}
-			}
-			//packet to be forwarded
-			else {
-				interface_t *inf;
-				inf = get_nexthop(ipheader->daddr);
-				char *packet = malloc(received_bytes);
-				memcpy(packet, recvbuf, received_bytes);
-				send_ip(inf, packet, received_bytes);
-				free(packet);
-			}
+				//packet to be forwarded
+				else {
+					interface_t *inf;
+					inf = get_nexthop(ipheader->daddr);
+					char *packet = malloc(received_bytes);
+					memcpy(packet, recvbuf, received_bytes);
+					send_ip(inf, packet, received_bytes);
+					free(packet);
+				}
 
-			free(ipheader);
+				free(ipheader);
+			}
 		}
 	}
-}
 
 	for(curr=interfaces->head;curr!=NULL;curr=curr->next){
 		interface_t *i = (interface_t *)curr->data;

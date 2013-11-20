@@ -26,5 +26,6 @@ int ip_sum(char* packet, int n) {
   sum = (sum >> 16) + (sum & 0xffff); /* add hi 16 to low 16 */
   sum += (sum >> 16);           /* add carry */
   answer = ~sum;                /* ones-complement, truncate*/
+
   return answer;
 }

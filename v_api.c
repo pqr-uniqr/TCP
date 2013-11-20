@@ -53,7 +53,10 @@ int v_listen(int socket){
 
 
 int v_accept(int socket, struct in_addr *node){
-	socket_t *nso, *lso = fd_lookup(socket); //nso -> new socket, lso -> listening socket
+
+	socket_t *lso = fd_lookup(socket); //lso -> listening socket
+
+	socket_t *nso;//nso -> new socket
 	struct in_addr anyaddr;
 	anyaddr.s_addr = 0;
 	if(lso->state != LISTENING) return -1; //"this is not a listening socket"
@@ -69,15 +72,16 @@ int v_accept(int socket, struct in_addr *node){
 	memcpy(&(nso->uraddr), request+TCPHDRSIZE, SIZE32);
 	memcpy(&(nso->myaddr), request+TCPHDRSIZE+SIZE32, SIZE32);
 	nso->urport = ((tcphdr *)request)->sourceport;
-	nso->ackseq= ++(((tcphdr *)request)->seqnum); 
+
+	nso->ackseq= ++(((tcphdr *)request)->seqnum);//mani chanhed ++ to +1 
+	
 	nso->myseq = rand() % MAXSEQ;
-	#ifdef SIMPLESEQ
-	nso->myseq = 0;
-	#endif
+	
 	set_socketstate(nso, SYN_RCVD);
+
 	nso->adwindow = ((tcphdr*)request)->adwindow;
 	init_windows(nso);
-
+	
 	//initiate buffer mamagement
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
@@ -100,6 +104,7 @@ int v_accept(int socket, struct in_addr *node){
 
 
 int v_connect(int socket, struct in_addr *addr, uint16_t port){
+
 	//bind the socket to a random port
 	struct in_addr any_addr;
 	any_addr.s_addr = 0;
@@ -114,9 +119,9 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	interface_t *i = get_nexthop(so->uraddr);
 	so->myaddr = i->sourcevip;
 	so->myseq = rand() % MAXSEQ;
-	#ifdef SIMPLESEQ
-	so->myseq = 0;
-	#endif
+	//#ifdef SIMPLESEQ
+	//so->myseq = 0;
+	//#endif
 	set_socketstate(so, SYN_SENT);
 	init_windows(so);
 
@@ -181,43 +186,76 @@ int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 
 
 void tcp_send_handshake(int gripnum, socket_t *socket){
-	tcphdr *header;
-	switch(gripnum){
+
+	tcphdr *header = NULL;
+
+	switch(gripnum) {
+
 		case 0:
-			//TODO RST
-			header = tcp_mastercrafter(0, 0,
-									0, 0,
-									0,0,1,0,0,
-									0);
-			break;
-		case 1 :
-			//first grip of 3WH
+			printf("\t TODO : RST NOT IMPLEMENTED YET\n");
+
+		case 1:
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									socket->myseq, 0,
 									0,1,0,0,0,
 									MAXSEQ);
 			break;
-		case 2 :
-			//second of 3WH
-			header =  tcp_mastercrafter(socket->myport, socket->urport,
+		case 2:
+			header = tcp_mastercrafter(socket->myport, socket->urport,
 									(socket->myseq)++, socket->ackseq,
 									0,1,0,0,1,
 									MAXSEQ);
+
 			break;
-		case 3 :
-			//third of 3WH
-			header =  tcp_mastercrafter(socket->myport, socket->urport,
+		case 3://maybe SYN set?
+			header = header =  tcp_mastercrafter(socket->myport, socket->urport,
 									++(socket->myseq), socket->ackseq, 
 									0,0,0,0,1,
 									MAXSEQ);
+			break;
+		default:
+			printf("\t WARNING : Unknown shake!\n");
 	}
-	//send the packet
-	tcp_hton(header);
-	interface_t *nexthop = get_nexthop(socket->uraddr);
-	char *packet = malloc(IPHDRSIZE+TCPHDRSIZE);
-	encapsulate_inip(socket->myaddr,socket->uraddr,(uint8_t)TCP,(void *)header, TCPHDRSIZE, &packet);
-	send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
-	return;
 
+	if (header == NULL) {
+		printf("\tWARNING : Could not make TCP header\n");
+		return;
+	}
+
+	//hton* all fields except the checksum. Checksum is calculated after this
+	tcp_hton(header);
+
+	tcp_print_packet_byte_ordered(header);
+
+	//TODO : you know what!
+	uint32_t total_length = 20;
+
+	//checksum : all good now
+	tcp_add_checksum(header, total_length, socket->myaddr, socket->uraddr, TCP);
+	if (header->check == 0) {
+		printf("\t ERROR : something went wrong with checksum\n");
+		return;
+	}
+
+
+	//TODO : error checking
+	interface_t *nexthop = get_nexthop(socket->uraddr);
+
+	//TODO : space for data?
+	char *packet = (char *)malloc(TCPHDRSIZE+IPHDRSIZE);
+
+	if (packet == NULL) {
+		printf("\t ERROR : Malloc failed\n");
+		return;
+	}
+
+	memset(packet, 0, TCPHDRSIZE+IPHDRSIZE);
+	//tcp_hton(header); //bad bad bad (learnt the hard way)
+	encapsulate_inip(socket->myaddr,socket->uraddr,(uint8_t)TCP,header, TCPHDRSIZE, &packet);
+	//printf("PACKET SIZE %d\n", TCPHDRSIZE);
+	send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
+
+	return;
 }
+
 

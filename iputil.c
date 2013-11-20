@@ -31,6 +31,8 @@ int encapsulate_inip (uint32_t src_vip, uint32_t dest_vip, uint8_t protocol, voi
 	h->version = 4;
 	h->ihl = 5;
 	h->tot_len = htons(packetsize);
+	h->ttl = 16;
+	
 	h->protocol = protocol;
 	h->saddr = src_vip;
 	h->daddr = dest_vip;

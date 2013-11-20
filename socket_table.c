@@ -107,7 +107,6 @@ void set_socketstate(socket_t *so, int state){
 	if(state == SYN_SENT || state == SYN_RCVD){
 		expect = 1;
 	}
-
 	printf("SOCKET %d: %s -> %s\n", so->id, state_names[prevstate].name, state_names[so->state].name);
 }
 

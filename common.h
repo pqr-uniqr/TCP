@@ -58,6 +58,11 @@
 //TCP macros
 #define MSS 1400
 #define MAXPORT 65535 
+
+#define WINDOW_SIZE 65535 //mani
+#define ZERO 0 //mani
+#define TCP_PSEUDO_HDR_SIZE 12
+
 #define MAXSEQ 100
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
