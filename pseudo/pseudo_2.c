@@ -28,7 +28,12 @@ DO: v_read_all behavior (small fix)
 
 DO: locking data structure: CB already has a lock--should i just expand CB
 
-DO: Sequence number has to be 2*window size
+DO: race condition--ACK arriving before packet is added to retransmission queue
+					NOT A BLOCKING ISSUE: move on
+					But the solution is this: when the main thread receives an ACK,
+					it is going to 
+
+#: Sequence number has to be 2*window size
 
 #: Retransmission queue
 	#- add segments to retransmission queue when flushing

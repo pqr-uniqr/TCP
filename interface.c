@@ -105,8 +105,7 @@ int setup_interface(char *filename) {
 
 //ups an interface
 void up_interface(const char *arg){
-	unsigned id;
-	int ret;
+	int id, ret;
 	ret = sscanf(arg, "up %u", &id);
 	if(ret != 1){
 		fprintf(stderr, "syntax error (usage: down[interface])\n");
@@ -117,7 +116,7 @@ void up_interface(const char *arg){
 	interface_t *inf;
 	for(curr=interfaces->head;curr!=NULL;curr=curr->next){
 		inf = curr->data;
-		if(id==inf->id){
+		if(id == inf->id){
 			inf->status = UP;
 			break;
 		}
@@ -135,8 +134,7 @@ void up_interface(const char *arg){
 
 //downs an interface
 void down_interface(const char *arg){
-	unsigned id;
-	int ret;
+	int ret, id;
 	ret = sscanf(arg, "down %u", &id);
 	if(ret != 1){
 		fprintf(stderr, "syntax error (usage: down[interface])\n");

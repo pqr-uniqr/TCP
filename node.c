@@ -170,7 +170,7 @@ int v_read_all(int s, void *buf, size_t bytes_requested){
 
 
 //initial branching of cases will happen here!
-void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
+void tcp_handler(const char *packet, interface_t *nothing, int nothing2){
 	struct iphdr *ipheader = malloc(sizeof(struct iphdr));
 	(void)decapsulate_fromip(packet, &ipheader);
 	
@@ -258,8 +258,8 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 				DL_COUNT(sendw->retrans_q_head, el, unacked_segs);
 	
 				//If there is anything new to be acked
+				printf("%d segments in flight\n", unacked_segs);
 				if(unacked_segs){
-
 					//due to sequence number wraparound
 					el = sendw->retrans_q_head->prev;
 					uint32_t acked_upto;
@@ -270,7 +270,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 						uint32_t seqnum = el->seqnum;
 						newly_acked += el->seglen;
 						struct timeval now;
-						gettimeofday(&now);
+						gettimeofday(&now,NULL);
 						double samplertt = now.tv_sec - el->lastsent.tv_sec + 
 						(now.tv_usec - el->lastsent.tv_usec) / 1000000.0;
 						//TODO calculate timeout interval
@@ -321,7 +321,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 						printf("	[segment: %d ---(%d bytes)--- %d]\n", tcpheader->seqnum,
 								payloadsize, tcpheader->seqnum + payloadsize - 1);
 #endif
-						int ret = CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
+						CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
 						//there is no gap--straightforward pointer update
 						if(rwin->lbc+1 == rwin->nbe){
 #ifdef DEBUG 
@@ -343,13 +343,14 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 						printf("TCP: packet arrived out of order\n");
 #endif 
 						//TODO packet arrived out of order
-						}
+					}
 
 					//time to send ACK -- ACK or a duplicate ACK
+					printf("sending an ACK\n");
 					so->adwindow = CB_GETCAP(rwin->buf);
 					tcphdr *ack =tcp_craft_ack(so);
 					tcp_hton(ack);
-					send_tcp(so, ack, TCPHDRSIZE);
+					send_tcp(so, (char *)ack, TCPHDRSIZE);
 				}
 			}
 		}
@@ -540,7 +541,7 @@ void recv_cmd(const char *line){
 
 
 
-void regular_update(int *updateTimer){
+void regular_update(){
 	time_t now = time(NULL);
 	if( (now - lastRIPupdate) > 2){
 		broadcast_rip_table();
@@ -610,7 +611,7 @@ void *recv_thr_func(void *nothing){
 
 while(1){
 
-	regular_update(&lastRIPupdate);
+	regular_update();
 	decrement_ttl();
 
 	readfds = masterfds;
@@ -671,7 +672,7 @@ while(1){
 }
 
 
-void rip_handler(const char *packet, interface_t *i, int received_bytes){
+void rip_handler(const char *packet, interface_t *i, int nothing){
 	int totsize;
 	char *rippart = (char *)packet+IPHDRSIZE;
 	rip_packet *rip = (rip_packet *)malloc(sizeof(rip_packet));

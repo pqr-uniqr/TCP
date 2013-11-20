@@ -50,7 +50,7 @@ int encapsulate_inip (uint32_t src_vip, uint32_t dest_vip, uint8_t protocol, voi
 
 //steps through the received IP packet and packs it back into a struct ip hdr
 //also returns a value suggesting whether the packet identified is to be delivered locally or forwarded
-uint32_t decapsulate_fromip (const char *packet, struct iphdr **ipheader) {
+uint32_t decapsulate_fromip (char *packet, struct iphdr **ipheader) {
 
 	char *p = packet;
 	struct iphdr *i = *ipheader;

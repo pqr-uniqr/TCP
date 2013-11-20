@@ -107,17 +107,17 @@ void set_socketstate(socket_t *so, int state){
 	if(state == SYN_SENT || state == SYN_RCVD){
 		expect = 1;
 	}
-
+#ifdef DEBUG
 	printf("SOCKET %d: %s -> %s\n", so->id, state_names[prevstate].name, state_names[so->state].name);
+#endif
 }
 
 void socket_flush(socket_t *so){
 	sendw_t *sendw = so->sendw;
-	int tosend;
+	uint32_t tosend;
 	int sent = 0;
 
 	while(!CB_EMPTY(sendw->buf)){
-
 		//read and send data
 		tosend = MIN(MSS-TCPHDRSIZE-IPHDRSIZE, CB_SIZE(sendw->buf));
 		unsigned char *payload = malloc(tosend);
@@ -128,22 +128,21 @@ void socket_flush(socket_t *so){
 
 		//store transmitted segment in retransmission queue with timestamp
 		retrans_t *el = malloc(sizeof(retrans_t));
+		DL_APPEND(sendw->retrans_q_head, el);
 		el->seqnum = so->myseq;
 		el->seglen = tosend;
 		gettimeofday(&el->lastsent, NULL);
 		el->data = payload;
 		el->retrans_count = 0;
-		DL_APPEND(sendw->retrans_q_head, el);
 
-		//update myseq and potentially wrap around
 		so->myseq = (so->myseq + tosend) % MAXSEQ;
+		//update myseq and potentially wrap around
 		free(tcppacket);
 	}	
 
 #ifdef DEBUG
-	printf("buffer flushed: %d bytes sent\n", sent);
+	printf("buffer flushed: %d bytes sent\n", sent-IPHDRSIZE-TCPHDRSIZE);
 #endif
-
 }
 
 
@@ -164,7 +163,7 @@ tcphdr *tcp_craft_ack(socket_t *so){
 
 //for making data packet
 void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uint32_t seqnum){
-	
+	printf("seqnum at encapsulate_inip %d\n", seqnum);
 	tcphdr *header = tcp_mastercrafter(so->myport, so->urport,
 			seqnum, so->ackseq,
 			0,0,0,0,1,
@@ -176,7 +175,7 @@ void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uin
 }
 
 
-void buf_mgmt(void *arg){
+void *buf_mgmt(void *arg){
 	int s=(int)arg;
 	socket_t *so = fd_lookup(s);
 	sendw_t *sendw = so->sendw;
@@ -189,12 +188,14 @@ void buf_mgmt(void *arg){
 		//TODO lock the window
 		unsent_bytes = CB_SIZE(sendw->buf);
 		DL_COUNT(sendw->retrans_q_head,elt,unacked_segs);
+		uint32_t fwind = so->adwindow;
 		//unacked_bytes = (so->myseq-1)- sendw->lba;
 
 		//there's unacked bytes -- should we retransmit them?
 		if(unacked_segs){
+			fwind -= sendw->retrans_q_head->seqnum;
 			DL_FOREACH(sendw->retrans_q_head, elt){
-				gettimeofday(&nowt);
+				gettimeofday(&nowt, NULL);
 				double now = nowt.tv_sec + (nowt.tv_usec/1000000.0);
 				double then = elt->lastsent.tv_sec + (elt->lastsent.tv_usec/1000000.0);
 				if(now - then > TIMEOUT){
@@ -209,8 +210,6 @@ void buf_mgmt(void *arg){
 
 		//there's unsent data -- should we flush them?
 		if(unsent_bytes){
-			//effective window size
-			uint32_t fwind = so->adwindow - (so->myseq - sendw->retrans_q_head-seqnum);
 			if((unsent_bytes >=MSS) && (fwind >= MSS)){
 				socket_flush(so);
 			}

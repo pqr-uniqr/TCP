@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
@@ -22,6 +23,9 @@
 #include <stdbool.h>
 #include <mcheck.h>
 #include <signal.h>
+
+
+#define DEBUG
 
 //node.h defines the MACROS
 #define INFINITY 	16
@@ -60,7 +64,8 @@
 //TCP macros
 #define MSS 1400
 #define MAXPORT 65535 
-#define MAXSEQ 10
+#define MAXSEQ (unsigned) (65535 * 2)
+#define WINSIZE 100
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
 #define CBT circular_buffer_t

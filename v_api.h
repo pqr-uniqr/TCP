@@ -2,7 +2,7 @@
 #include "socket_table.h"
 
 int v_socket();
-int v_bind(int socket, struct in_addr *addr, uint16_t port);
+int v_bind(int socket, struct in_addr *nothing, uint16_t port);
 int v_listen(int socket);
 int v_accept(int socket, struct in_addr *node);
 int v_connect(int socket, struct in_addr *addr, uint16_t port);

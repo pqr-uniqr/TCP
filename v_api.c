@@ -31,7 +31,7 @@ int v_socket(){
 	return so->id;
 }
 
-int v_bind(int socket, struct in_addr *addr, uint16_t port){
+int v_bind(int socket, struct in_addr *nothing, uint16_t port){
 	//find the socket, set port, add it to its port list
 	socket_t *so = fd_lookup(socket);
 	if(so==NULL) return -1; //"no such socket"
@@ -141,8 +141,8 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 void init_windows(socket_t *so){
 	so->sendw = malloc(sizeof(sendw_t));
 	so->recvw = malloc(sizeof(recvw_t));
-	CB_INIT(&so->sendw->buf, MAXSEQ/2);
-	CB_INIT(&so->recvw->buf, MAXSEQ/2);
+	CB_INIT(&so->sendw->buf, WINSIZE);
+	CB_INIT(&so->recvw->buf, WINSIZE);
 	//unsigned char *send_start = so->sendw->buf->write_pointer;
 	unsigned char *recv_start = so->recvw->buf->write_pointer;
 	//so->sendw->lbw = send_start; 
@@ -197,21 +197,21 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									socket->myseq, 0,
 									0,1,0,0,0,
-									MAXSEQ/2); //half the max sequence number
+									WINSIZE); //half the max sequence number
 			break;
 		case 2 :
 			//second of 3WH
 			header =  tcp_mastercrafter(socket->myport, socket->urport,
 									(socket->myseq)++, socket->ackseq,
 									0,1,0,0,1,
-									MAXSEQ/2);
+									WINSIZE);
 			break;
 		case 3 :
 			//third of 3WH
 			header =  tcp_mastercrafter(socket->myport, socket->urport,
 									++(socket->myseq), socket->ackseq, 
 									0,0,0,0,1,
-									MAXSEQ/2);
+									WINSIZE);
 	}
 	//send the packet
 	tcp_hton(header);
