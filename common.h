@@ -6,6 +6,7 @@
 #include "csupport/utlist.h"
 #include "csupport/bqueue.h"
 #include "csupport/circular_buffer.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -59,18 +60,23 @@
 #define TCP 6
 
 #define REFRESH_TIME	15
-#define TIMEOUT 3//timeout macro for TCP retransmission
+
 
 //TCP macros
-#define MSS 45
 #define MAXPORT 65535 
 
 #define WINDOW_SIZE 65535 //mani
 #define ZERO 0 //mani
 #define TCP_PSEUDO_HDR_SIZE 12
 
-#define MAXSEQ (unsigned) (65535 * 2)
-#define WINSIZE 100
+#define MSS 1400
+#define MAXSEQ (unsigned) 4294967295 //2^32 -1
+#define WINSIZE 65535
+/*  
+#define MSS 45
+#define MAXSEQ (unsigned) 20
+#define WINSIZE 10 */
+
 
 #define NQ bqueue_enqueue
 #define DQ bqueue_dequeue
@@ -82,7 +88,14 @@
 #define CB_READ circular_buffer_read
 #define CB_EMPTY circular_buffer_is_empty
 #define CB_SIZE circular_buffer_get_size
+
+#define ALPHA (double) 0.8
+#define BETA (double) 1.5
+#define RTO_UBOUND 120
+#define RTO_LBOUND (double)0.001
+#define TIMEOUT (double) 0.001 //timeout macro for TCP retransmission
 #define MIN(a,b) a>b? b:a
+#define MAX(a,b) a>b? a:b
 //TCP state machine macros
 #define LISTENING 0
 #define SYN_SENT 1

@@ -86,9 +86,12 @@ int v_accept(int socket, struct in_addr *node){
 
 	set_socketstate(nso, SYN_RCVD);
 
-	nso->adwindow = ((tcphdr*)request)->adwindow;
 	init_windows(nso);
+	nso->sendw->adwindow = ((tcphdr *)request)->adwindow;
 	
+	//send respones (second grip)
+	tcp_send_handshake(2, nso);
+
 	//initiate buffer mamagement
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
@@ -103,8 +106,6 @@ int v_accept(int socket, struct in_addr *node){
 	//if caller wants request origin
 	if(node!=NULL) node->s_addr = nso->uraddr;
 
-	//send respones (second grip)
-	tcp_send_handshake(2, nso);
 	return s;
 }
 
@@ -132,10 +133,17 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	set_socketstate(so, SYN_SENT);
 	init_windows(so);
 
+	//send a connection request (first grip)
+	tcp_send_handshake(1, so);
+
 	//commence buffer management
 	int s = (int)socket;
+
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
+
+	int stacksize = (PTHREAD_STACK_MIN + 0x4000);
+	printf("!!!!this thread's stack size is %d \n", PTHREAD_STACK_MIN);
 	pthread_attr_init(&thr_attr);
 	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt, (void *) s);
@@ -143,8 +151,6 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	//store it in the lookup table (urport, myport, uraddr)
 	HASH_ADD(hh2, socket_table, urport, keylen, so);
 
-	//send a connection request (first grip)
-	tcp_send_handshake(1, so);
 	return 0;
 }
 
@@ -154,16 +160,21 @@ void init_windows(socket_t *so){
 	so->sendw = malloc(sizeof(sendw_t));
 	so->recvw = malloc(sizeof(recvw_t));
 	CB_INIT(&so->sendw->buf, WINSIZE);
-	CB_INIT(&so->recvw->buf, WINSIZE);
-	//unsigned char *send_start = so->sendw->buf->write_pointer;
-	//unsigned char *recv_start = so->recvw->buf->write_pointer;
-	//so->sendw->lbw = send_start; 
-	//so->sendw->lbs = send_start;
-	//so->sendw->lba = so->myseq;
-	so->sendw->retrans_q_head = NULL;
-	so->sendw->acked = 1; //TODO make this work for non SIMPLESEQ case
-	so->recvw->oor_q_head = NULL;
+	CB_INIT(&so->recvw->buf, WINSIZE); 
+	printf("this window's capacity is %d\n", CB_GETCAP(so->sendw->buf));
 
+	pthread_mutexattr_t mutexattr;
+	pthread_mutexattr_init(&mutexattr);
+	pthread_mutex_init(&so->sendw->lock, &mutexattr);
+
+	so->sendw->retrans_q_head = NULL; //retransmissionqueue
+	so->sendw->ackhistory = NULL; //ack history table
+	so->sendw->hack = so->myseq+1;  //highest ack TODO wrap
+	so->sendw->rto = 0.00350;
+	so->sendw->srtt = 0.00350;
+
+	so->recvw->oor_q_head = NULL; //out of order packet list
+	so->recvw->oor_q_size = 0;
 	return;
 }
 
@@ -173,7 +184,7 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	if(CB_FULL(so->sendw->buf)) return 0; //"no write possible"
 	int cap = CB_GETCAP(so->sendw->buf);
 	int ret = CB_WRITE(so->sendw->buf, buf, MIN(cap, nbyte));
-	printf("%d written to the buffer\n", ret);
+	//printf("%d written to the buffer\n", ret);
 	return ret;
 }
 
@@ -185,7 +196,7 @@ int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	if(toread <= 0) return 0;
 	printf("v_read\n");
 	int ret = CB_READ(recvw->buf, buf, toread);
-	so->adwindow = CB_GETCAP(recvw->buf);
+	//so->adwindow = CB_GETCAP(recvw->buf);
 	return ret;
 }
 
@@ -206,20 +217,20 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 
 		case 1:
 			header = tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, 0,0,1,0,0,0,MAXSEQ); //half the max sequence number
+									socket->myseq, 0,0,1,0,0,0, WINSIZE); //half the max sequence number
 			
 			break;
 		case 2:
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									(socket->myseq)++, socket->ackseq,
-									0,1,0,0,1,MAXSEQ);
+									0,1,0,0,1, WINSIZE);
 
 			break;
 
 		case 3://maybe SYN set?
 			header = header =  tcp_mastercrafter(socket->myport, socket->urport,
 									++(socket->myseq), socket->ackseq, 
-									0,0,0,0,1,MAXSEQ);
+									0,0,0,0,1, WINSIZE);
 			break;
 
 		default:

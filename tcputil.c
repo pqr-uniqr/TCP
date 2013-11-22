@@ -49,7 +49,7 @@ void tcp_hton(tcphdr *header){
 tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
 			uint32_t seqnum, uint32_t acknum,
 			bool fin, bool syn, bool rst, bool psh, bool ack,
-			uint16_t adwindow){
+			uint16_t mywindow){
 
 	struct tcphdr *header = malloc(sizeof(struct tcphdr));
 
@@ -71,7 +71,7 @@ tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
 	if(rst) RST_SET(header->orf);
 	if(psh) PSH_SET(header->orf);
 	if(ack) ACK_SET(header->orf);
-	header->adwindow = adwindow;	
+	header->adwindow= mywindow;	
 	header->check = ZERO;
 
 	return header;

@@ -179,7 +179,7 @@ int circular_buffer_write(circular_buffer_t *cbuf, const void *buf, size_t count
   }
     
 #ifdef CIRCULAR_BUFFER_DEBUG
-  circular_buffer_print_contents(cbuf);
+  //circular_buffer_print_contents(cbuf);
 #endif
     
   pthread_mutex_unlock(&cbuf->pointer_lock);
@@ -256,7 +256,7 @@ int circular_buffer_read(circular_buffer_t *cbuf, void *buf, size_t count)
     }
     
 #ifdef CIRCULAR_BUFFER_DEBUG
-    circular_buffer_print_contents(cbuf);
+    //circular_buffer_print_contents(cbuf);
 #endif
     
     pthread_mutex_unlock(&cbuf->pointer_lock);
