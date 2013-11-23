@@ -23,6 +23,7 @@ int maxsockfd = 3, expect = 0;
 unsigned keylen = offsetof(socket_t, uraddr)
 	+sizeof(uint32_t) -offsetof(socket_t, urport); 
 time_t lastRIPupdate;
+struct timeval span;
 
 struct {
 	int protocol;
@@ -204,7 +205,6 @@ void shutdown_cmd(const char *line){
 }
 
 void *recvfile_thr_func(void *arg){
-
   int s;
   int s_data;
   int fd;
@@ -223,6 +223,7 @@ void *recvfile_thr_func(void *arg){
     fprintf(stderr, "v_accept() error: %s\n", strerror(-s_data));
     return NULL;
   }
+	sleep(1);
   ret = v_close(s);
   if (ret < 0){
     fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
@@ -233,12 +234,12 @@ void *recvfile_thr_func(void *arg){
 
     if (bytes_read < 0){
       fprintf(stderr, "v_read() error: %s\n", strerror(-bytes_read));
-      break;
+      //break;
     }
     ret = write(fd, buf, bytes_read);
     if (ret < 0){
       fprintf(stderr, "write() error: %s\n", strerror(errno));
-      break;
+      //break;
     }
   }
 
@@ -350,21 +351,21 @@ void *sendfile_thr_func(void *arg){
   fd = thr_arg->fd;
   free(thr_arg);
 
-  while ((bytes_read = read(fd, buf, sizeof(buf))) != 0){
+  while((bytes_read = read(fd, buf, sizeof(buf))) != 0){
     if (bytes_read == -1){
       fprintf(stderr, "read() error: %s\n", strerror(errno));
       break;
     }
     ret = v_write_all(s, buf, bytes_read);
-
-    printf("File contents being sent\n %s\n", buf);
+    //printf("File contents being sent\n %s\n", buf);
 
     if (ret < 0){
       fprintf(stderr, "v_write() error: %s\n", strerror(-ret));
-      break;
+      //break;
     }
     if (ret != bytes_read){
-      break;
+			//printf("ret %d bytes_read %d\n", ret, bytes_read);
+      //break;
     }
   }
 
@@ -419,7 +420,7 @@ void sendfile_cmd(const char *line){
   }
   
   fd = open(filename, O_RDONLY);
-  
+
   if (fd == -1){
     fprintf(stderr, "open() error: %s\n", strerror(errno));
   }
@@ -481,10 +482,6 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
     printf("******************** Received tcp pacekt **************************: \n");
 #endif
 	
-  /******************** Not Listening *************************
-  we are not accepting connections
-
-  *************************************************************/
   if (is_listening(tcpheader->destport) == NULL) {
 
 #ifdef DEBUG
@@ -542,13 +539,13 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 #ifdef DEBUG
     printf(_YELLOW_"\t CASE 2 : handshake (2), receieved SYN/ACK"_NORMAL_"\n");
-    tcp_print_packet(tcpheader);
+    //tcp_print_packet(tcpheader);
 #endif
 
       printf(_BBLUE_" SYN_SENT --> ESTABLISHED"_NORMAL_"\n");
       so->state = ESTABLISHED;
       so->ackseq= ++(tcpheader->seqnum); 
-      so->adwindow = tcpheader->adwindow;
+      //so->adwindow = tcpheader->adwindow;
 
       tcp_send_handshake(ESTABLISHED, so);
       return;
@@ -652,6 +649,29 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 #ifdef DEBUG
     printf(_YELLOW_"\t CASE 7 : ACK general"_NORMAL_"\n");
 #endif
+      /*
+			if(so->state != SYN_SENT){
+					free(tcpheader);
+					free(ipheader);
+					return;
+			}
+			set_socketstate(so, ESTABLISHED);
+			so->ackseq= ++(tcpheader->seqnum);
+			so->sendw->adwindow = tcpheader->adwindow;
+
+			tcp_send_handshake(3, so);
+			free(tcpheader);
+			free(ipheader);
+			return;
+		}*/
+
+		//third grip & beyond
+		//else {
+
+			#ifdef DEBUG
+			printf("\nTCP_HANDLER CALL-----------------------\n");
+			printf("ack for %d\n",tcpheader->ack_seq);
+			#endif
 
 			//if anything arrives beyond the thidr grip, ESTABLISHED
 			if(so->state == SYN_RCVD){
@@ -666,8 +686,9 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 				int count;
 				sendw_t *sendw = so->sendw;
 
-				int newly_acked = tcpheader->ack_seq > sendw->acked?
-							tcpheader->ack_seq - sendw->acked:0;
+				//if this is a novel ack
+				if(tcpheader->ack_seq != sendw->hack){
+					pthread_mutex_lock(&sendw->lock);
 
 				//printf("Retransmission Queue Contents:\n");
 				//DL_FOREACH(sendw->retrans_q_head, el){
@@ -675,19 +696,36 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 						//el->seqnum+el->seglen-1);
 				//}
 
-				if(newly_acked){
-					printf("ack for %d arrived\n", tcpheader->ack_seq);
-					sendw->acked = tcpheader->ack_seq;
-					gettimeofday(&sendw->acked_at, NULL);
+					//store highest ACK for fast dequeuing from retransmission queue
+					sendw->hack = tcpheader->ack_seq;
+					//store adwindow of the corresponding receiving window
+					sendw->adwindow = tcpheader->adwindow;
+
+					//store ack in ackhistory table for RTT calculation
+					ack_t *nack = malloc(sizeof(ack_t));
+					nack->ackseq= tcpheader->ack_seq;
+					gettimeofday(&nack->tstamp, NULL);
+					HASH_ADD(hh, sendw->ackhistory, ackseq, sizeof(uint32_t), nack);
+
+					//show newly acked segments
+					#ifdef DEBUG
+					printf("TCP: ack for %d arrived\n", tcpheader->ack_seq);
+					printf("Retransmission Queue Contents:\n");
+					DL_FOREACH(sendw->retrans_q_head, el){
+						printf(" [Segment: %d ---%d bytes--- %d]", el->seqnum, el->seglen,
+							el->seqnum+el->seglen-1);
+						if(el->seqnum < tcpheader->ack_seq) printf("NACKED");
+						printf("\n");
+					}
+					printf("\n");
+					#endif
+					pthread_mutex_unlock(&sendw->lock);
 				}
 
+				/*  
 				if(!newly_acked && count){
 					//TODO this must be a duplicate ack?
-				}
-
-				#ifdef DEBUG
-				printf("TCP: %d new bytes acknowledged\n", newly_acked);
-				#endif
+				} */
 
 				int payloadsize = ipheader->tot_len -IPHDRSIZE - TCPHDRSIZE;
 				printf("payloadsize = %d\n", payloadsize);
@@ -698,68 +736,97 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 					#ifdef DEBUG
 					printf("Packet contains data:\n");
 					printf("	[segment: %d ---(%d bytes)--- %d]\n", tcpheader->seqnum,
-					payloadsize, tcpheader->seqnum + payloadsize - 1);
+					payloadsize, (tcpheader->seqnum + payloadsize - 1) % MAXSEQ);
 					#endif
 					recvw_t *rwin = so->recvw;
 
 					//we don't have space for more data
 					if(CB_FULL(rwin->buf)){
+						#ifdef DEBUG
+						printf("TCP: recv window full\n");
+						#endif
 						free(ipheader);
 						free(tcpheader);
 						return;
 					}
 
+					//if we send the right adwindow of CB_GETCAP - size of OOr queue,
+					//OOr chains will never overflow
 					int cap = CB_GETCAP(rwin->buf);
 
 					//if this segment is what we are expecting
 					if(tcpheader->seqnum == so->ackseq){
 						#ifdef DEBUG 
-						printf("TCP: in-order data packet received\n");
+						printf("TCP: IN ORDER\n");
 						#endif
+
 						CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
-						so->ackseq += payloadsize;
-						
-						//if there are out of order packets
+						so->ackseq = (so->ackseq + payloadsize) % MAXSEQ; //TODO wrap
 						DL_COUNT(rwin->oor_q_head, el, count);
+						//Any adjacent packets previously received out of order?
 						if(count){
-							uint32_t adjseq = tcpheader->seqnum + payloadsize;
+							uint32_t adjseq = (tcpheader->seqnum + payloadsize) % MAXSEQ; //TODO wrap
+
 							while(1){
 								el = NULL;
 								DL_SEARCH_SCALAR(rwin->oor_q_head, el, seqnum, adjseq);
-								if(el==NULL) break;
+
+								if(el==NULL) break; //adjacent chain broken!
+								//adjacent chain continues!
 								CB_WRITE(rwin->buf, el->data,
 									MIN(el->seglen, cap - payloadsize));
-								so->ackseq += el->seglen;
-								adjseq = el->seqnum + el->seglen;
+								so->ackseq  = (so->ackseq + el->seglen) % MAXSEQ; //TODO wrap
+								adjseq = (el->seqnum + el->seglen) % MAXSEQ; //TODO wrap
+
+								//get rid of it from the OOr q
+								rwin->oor_q_size -= el->seglen;
+								DL_DELETE(rwin->oor_q_head, el);
 							}
 						}
-						
-					} else {
 
-						if(so->ackseq > tcpheader->seqnum){
-							printf("TCP: redundant packet\n");
-							//redundant packet
-						} else {
+					} else {
+					
+						if(so->ackseq + CB_GETCAP(rwin->buf) < tcpheader->seqnum || 
+								tcpheader->seqnum < so->ackseq){
 							#ifdef DEBUG
-							printf("TCP: packet arrived out of order\n");
+							printf("TCP: IRRELEVANT (OUT OF WINDOW OR REDUNDANT)\n");
 							#endif
-							seg_t *el = malloc(sizeof(seg_t));
-							DL_APPEND(rwin->oor_q_head, el);
-							el->seqnum = tcpheader->seqnum;
-							el->seglen = payloadsize;
-							unsigned char *payload = malloc(payloadsize);
-							memcpy(payload, packet+IPHDRSIZE+TCPHDRSIZE,payloadsize);
-							el->data = payload;
-							DL_SORT(rwin->oor_q_head, seqcmp);
+						}
+						else {
+							#ifdef DEBUG
+							printf("TCP: OUT OF ORDER (BUT RELEVANT)\n");
+							#endif
+							//check if this out of order packet has already been received
+							el = NULL;
+							DL_SEARCH_SCALAR(rwin->oor_q_head, el, seqnum, tcpheader->seqnum);
+						
+							if(el==NULL){
+								printf("TCP: storing this OOO packet\n");
+								el = malloc(sizeof(seg_t));
+								DL_APPEND(rwin->oor_q_head, el);
+								rwin->oor_q_size+=payloadsize;
+								el->seqnum = tcpheader->seqnum;
+								el->seglen = payloadsize;
+								unsigned char *payload = malloc(payloadsize);
+								memcpy(payload, packet+IPHDRSIZE+TCPHDRSIZE,payloadsize);
+								el->data = payload;
+								DL_SORT(rwin->oor_q_head, seqcmp);
+							}
 						}
 					}
 
 					//time to send ACK -- ACK or a duplicate ACK
-					printf("sending an ACK for %d\n", so->ackseq);
-					so->adwindow = CB_GETCAP(rwin->buf);
 					tcphdr *ack =tcp_craft_ack(so);
 					tcp_hton(ack);
 					send_tcp(so, (char *)ack, TCPHDRSIZE);
+					#ifdef DEBUG
+					printf("sending an ACK for %d\n", so->ackseq);
+					printf("---------------------------------------\n");
+					#endif 
+				} else {
+					#ifdef DEBUG
+					printf("---------------------------------------\n");
+					#endif
 				}
 			}
 	}
@@ -956,18 +1023,33 @@ void recv_cmd(const char *line){
   return;
 }
 
-int seqcmp(uint32_t seq1, uint32_t seq2){
-	return (int) seq1 - (int) seq2;
+
+int seqcmp(seg_t *seq1, seg_t *seq2){
+	return (int) seq1->seqnum - (int) seq2->seqnum;
 }
 
 void regular_update(){
 	
+	rtu_routing_entry *entry, *temp;
+	char xx[INET_ADDRSTRLEN];
 	time_t now = time(NULL);
+
 	if( (now - lastRIPupdate) > 2){
 		broadcast_rip_table();
 		lastRIPupdate = now;
+		HASH_ITER(hh, routing_table, entry, temp){
+			if(entry->cost != 0 && entry->ttl != 0){
+				entry->ttl--;
+				if(entry->ttl==0){
+					inet_ntop(AF_INET, ((struct in_addr *)&(entry->addr)), xx, INET_ADDRSTRLEN);
+					printf("entry to %s expired\n", xx);
+					entry->cost = 16;
+				}
+			}
+		}
 	}
 }
+
 
 
 /*FUNCTIONS FROM IP---------------------------------------------------------------  */
@@ -1002,7 +1084,7 @@ void *recv_thr_func(void *nothing){
 	while(1){
 
 	regular_update();
-	decrement_ttl();
+	//decrement_ttl();
 
 	readfds = masterfds;
 	tvcopy = tv;
@@ -1189,17 +1271,3 @@ void print_routes ()
     printf(_NORMAL_);
 }
 
-void decrement_ttl(){
-	rtu_routing_entry *entry, *temp;
-	char xx[INET_ADDRSTRLEN];
-	HASH_ITER(hh, routing_table, entry, temp){
-		if(entry->cost != 0 && entry->ttl != 0){
-			entry->ttl--;
-			if(entry->ttl==0){
-				inet_ntop(AF_INET, ((struct in_addr *)&(entry->addr)), xx, INET_ADDRSTRLEN);
-				printf("entry to %s expired\n", xx);
-				entry->cost = 16;
-			}
-		}
-	}
-}

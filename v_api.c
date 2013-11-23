@@ -231,14 +231,18 @@ int v_accept(int socket, struct in_addr *node){
 	nso->ackseq= ++(((tcphdr *)request)->seqnum);
 
 	nso->myseq = rand() % MAXSEQ;
-	//#ifdef SIMPLESEQ
-	//nso->myseq = 0;
-	//#endif
+#ifdef SIMPLESEQ
+	nso->myseq = 0;
+#endif
 
 	set_socketstate(nso, SYN_RCVD);
-	nso->adwindow = ((tcphdr*)request)->adwindow;
+
 	init_windows(nso);
+	nso->sendw->adwindow = ((tcphdr *)request)->adwindow;
 	
+	//send respones (second grip)
+	tcp_send_handshake(2, nso);
+
 	//initiate buffer mamagement
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
@@ -253,8 +257,6 @@ int v_accept(int socket, struct in_addr *node){
 	//if caller wants request origin
 	if(node!=NULL) node->s_addr = nso->uraddr;
 
-	//send respones (second grip)
-	tcp_send_handshake(2, nso);
 	return s;
 }
 
@@ -273,6 +275,7 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	/************** My write is shut down ***************/
 	if (so->state == FIN_WAIT_2) {
 
+
 #ifdef DEBUG
 		printf(_RED_"v_connect: connection closing for socket %d "_NORMAL_"\n", so->id);
 #endif
@@ -286,7 +289,6 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 #endif
 		return -EBADF;
 	}
-
 
 	if(CB_FULL(so->sendw->buf)) return 0; //"no write possible"
 	int cap = CB_GETCAP(so->sendw->buf);
@@ -302,18 +304,25 @@ void init_windows(socket_t *so) {
 	so->sendw = malloc(sizeof(sendw_t));
 	so->recvw = malloc(sizeof(recvw_t));
 	CB_INIT(&so->sendw->buf, WINSIZE);
-	CB_INIT(&so->recvw->buf, WINSIZE);
-	//unsigned char *send_start = so->sendw->buf->write_pointer;
-	//unsigned char *recv_start = so->recvw->buf->write_pointer;
-	//so->sendw->lbw = send_start; 
-	//so->sendw->lbs = send_start;
-	//so->sendw->lba = so->myseq;
-	so->sendw->retrans_q_head = NULL;
-	so->sendw->acked = 1; //TODO make this work for non SIMPLESEQ case
-	so->recvw->oor_q_head = NULL;
-	return;
 
+	CB_INIT(&so->recvw->buf, WINSIZE); 
+
+	pthread_mutexattr_t mutexattr;
+	pthread_mutexattr_init(&mutexattr);
+	pthread_mutex_init(&so->sendw->lock, &mutexattr);
+
+	so->sendw->retrans_q_head = NULL; //retransmissionqueue
+	so->sendw->ackhistory = NULL; //ack history table
+	so->sendw->hack = so->myseq+1;  //highest ack TODO wrap
+	so->sendw->rto = 0.00350;
+	so->sendw->srtt = 0.00350;
+
+	so->recvw->oor_q_head = NULL; //out of order packet list
+	so->recvw->oor_q_size = 0;
+
+	return;
 }
+
 
 /**
 * TODO : take the pseudo header function out. NOTE : make sure it is generic
@@ -332,20 +341,20 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 
 		case SYN_SENT://1'st shake
 			header = tcp_mastercrafter(socket->myport, socket->urport,
-									socket->myseq, 0,0,1,0,0,0,MAXSEQ); //half the max sequence number
+									socket->myseq, 0,0,1,0,0,0, WINSIZE); //half the max sequence number
 			
 			break;
 		case SYN_RCVD://2'nd shake
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									(socket->myseq)++, socket->ackseq,
-									0,1,0,0,1,MAXSEQ);
+									0,1,0,0,1, WINSIZE);
 
 			break;
 
 		case ESTABLISHED://3'rd shake
 			header = tcp_mastercrafter(socket->myport, socket->urport,
 									++(socket->myseq), socket->ackseq, 
-									0,0,0,0,1,MAXSEQ);
+									0,0,0,0,1, WINSIZE);
 			break;
 
 		case FIN_WAIT_1:// from ESTABLISHED --> FIN_WAIT_1 state (FIN SEGMENT)
@@ -472,7 +481,7 @@ int v_read(int socket, unsigned char *buf, uint32_t nbyte){
 	}
 
 	//printf("----- SIZE IS %d\n", so->adwindow);
-	so->adwindow = CB_GETCAP(recvw->buf);
+	//so->adwindow = CB_GETCAP(recvw->buf);
 	return ret;
 
 }

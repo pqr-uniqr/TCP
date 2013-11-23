@@ -15,7 +15,6 @@ typedef struct socket{
 	uint32_t myaddr;
 	uint32_t myseq;
 	uint32_t ackseq;
-	uint32_t adwindow;
 
 	pthread_t th;
 	int read_lock;
@@ -26,7 +25,6 @@ typedef struct socket{
 
 	//state representation 
 	int state;
-	int timer; //TODO PROBABLY WON'T GO HERE
 
 	UT_hash_handle hh1; //hashed by id (fd number)
 	UT_hash_handle hh2; //hashed by compound key {urport,myport,uraddr} --order matters
@@ -57,6 +55,7 @@ extern sockets_on_port *sockets_by_port;
 extern int maxsockfd;
 extern unsigned keylen;
 extern int expect;
+extern struct timeval span;
 
 
 socket_t *fd_lookup(int fdnumber);
@@ -69,4 +68,3 @@ int send_tcp(socket_t *so, char *tcppacket, int size);
 tcphdr *tcp_craft_ack(socket_t *so);
 void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uint32_t seqnum);
 void *buf_mgmt(void *arg);
-void p_inc(int by, unsigned char *p);

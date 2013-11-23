@@ -26,7 +26,7 @@ void shutdown_cmd(const char *line);
 void close_cmd(const char *line);
 int v_read_all(int s, void *buf, size_t bytes_requested);
 
-int seqcmp(uint32_t seq1, uint32_t seq2);
+int seqcmp(seg_t *seq1, seg_t *seq2);
 
 
 /*  

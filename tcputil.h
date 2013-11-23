@@ -21,7 +21,7 @@ struct pseudo_tcpp
 	uint8_t 		psdo_prot;
 	uint16_t		psdo_tcpl;
 	struct tcphdr 	tcp;
-	char 			payload[1024];
+	char 			payload[MSS];
 };
 
 //macros for tcputil.c -
@@ -51,7 +51,7 @@ void tcp_ntoh(tcphdr *header);
 tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,
 			uint32_t seqnum, uint32_t acknum,
 			bool fin, bool syn, bool rst, bool psh, bool ack,
-			uint16_t adwindow);
+			uint16_t mywindow);
 void tcp_print_packet(tcphdr *header);
 void tcp_print_packet_byte_ordered(tcphdr *header);
 int tcp_checksum(void *packet, uint16_t total_length);
