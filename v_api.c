@@ -141,7 +141,6 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
-
 	pthread_attr_init(&thr_attr);
 	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt, (void *) s);
