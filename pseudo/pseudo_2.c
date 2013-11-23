@@ -23,7 +23,7 @@ DO: race condition--ACK arriving before packet is added to retransmission queue
 					by the main thread and referenced by the socket thread
 					HOWEVER, this might conflict with the "myseq-only wraparound" solution
 
-DO: wrap around
+#: wrap around
 	initial capacity should be registered as the corresponding window's max sequence number
 	receiver should be able to wrap ACK around
 	sender should be able to wrap his SEQ around

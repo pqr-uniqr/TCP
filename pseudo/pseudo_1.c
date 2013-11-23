@@ -2,19 +2,18 @@ PSEUDOCODE for TCP - Connection Establishment
 
 
 [TODOS & NOTES]
-do free packets properly in tcp_handler() (goto didn't work for some reason)
 
 do send RST if no one is listening on the port
 	->for now, I just send back a packet with nothing but RST set
 
-do connection timeout feature
+#connection timeout feature
 	*list.c has no deletion feature !!! do this
 	*uses a fake int counter: change that to a real time_t timer
 	*UTHASH has no support for HASH_DEL on hh1 and hh2 ->temporary solution:
 			-add attribute to socket_t that represents deleted state
 	*maybe just set the state to CLOSED?
 
-do when to calculate checksum? "DELAYED: NOT A BLOCKING ISSUE"
+#when to calculate checksum? "DELAYED: NOT A BLOCKING ISSUE"
 	*tcp_checksum(struct addr_in saddr, addr_in daddr, uint8_t protocol,
 			uint16_t transport_packet_len, char *transport_packet)
 
@@ -96,10 +95,6 @@ do when to calculate checksum? "DELAYED: NOT A BLOCKING ISSUE"
 ?confusion: will every active socket maintain a thread? no. for active sockets,
 	reading from socket will be done manually through the "recv" commmand
 	
-
-
-
-
 
 
 [the scenario: Three Way Handshake]

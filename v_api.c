@@ -16,7 +16,7 @@
  * =====================================================================================
  */
 
-#define SIMPLESEQ //start with Sequence number 0 --easier to debug
+//#define SIMPLESEQ //start with Sequence number 0 --easier to debug
 #include "v_api.h"
 #include "common.h"
 
