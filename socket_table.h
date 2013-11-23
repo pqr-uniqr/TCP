@@ -17,9 +17,13 @@ typedef struct socket{
 	uint32_t ackseq;
 	uint32_t adwindow;
 
+	pthread_t th;
+	int read_lock;
+	
 	bqueue_t *q;
 	sendw_t *sendw;
 	recvw_t *recvw;
+
 	//state representation 
 	int state;
 	int timer; //TODO PROBABLY WON'T GO HERE

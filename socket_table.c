@@ -25,9 +25,8 @@ struct pseudo_tcp
 	unsigned char ptcl;
 	unsigned short tcpl;
 	struct tcphdr tcp;
-	char payload[1024];
+	char payload[14000];
 };
-
 
 struct {
 	const char *name;
@@ -35,18 +34,31 @@ struct {
 	{"LISTENING"},
 	{"SYN_SENT"},
 	{"SYN_RCVD"},
-	{"ESTABLISHED"}
+	{"ESTABLISHED"},
+	{"FIN_WAIT_1"},
+	{"CLOSE_WAIT"},
+	{"FIN_WAIT_2"},
+	{"LAST_ACK"},
+	{"TIME_WAIT"},
+	{"CLOSED"},
+	{"CLOSING"},
+	{"CLOSE"},
 };
 
 socket_t *fd_lookup(int fdnumber){
-	socket_t *sock;
+
+	socket_t *sock = NULL;
 	HASH_FIND(hh1, fd_list, &fdnumber, sizeof(int), sock);
 	return sock;
 }
 
-sockets_on_port *get_sockets_on_port(uint16_t port){
-	sockets_on_port *sop;
+/* problem. added a new function which specifically check if there 
+is a listening socket on our side (mani)*/
+sockets_on_port *get_sockets_on_port(uint16_t port) {
+
+	sockets_on_port *sop = NULL;
 	HASH_FIND(hh, sockets_by_port, &port, sizeof(uint16_t), sop);
+
 	if(sop == NULL){
 		//printf("sop for port %d not created yet\n", port);
 		sop = malloc(sizeof(sockets_on_port));
@@ -61,56 +73,50 @@ sockets_on_port *get_sockets_on_port(uint16_t port){
 	return sop;
 }
 
-/*
-int destroy_socket(int socket){
-	//find the socket
-	socket_t *so = fd_lookup(socket);
-	printf("so found\n");
-	HASH_DELETE(hh1, fd_list, so);
-	HASH_DELETE(hh2, socket_table, so);
+int *is_listening(uint16_t port) {
 
-	
-	socket_t *s, *tmp;
-	HASH_ITER(hh1, fd_list, s,tmp){
-		if(so->id == s->id) HASH_DEL(fd_list, s);
-	}
-	HASH_ITER(hh2, socket_table, s, tmp){
-		if(so->id == s->id) HASH_DEL(fd_list, s);
-	}
-	sockets_on_port *sop = get_sockets_on_port(so->myport);
-	printf("sop search\n"); */
-	//if(sop->listening_socket->id==so->id) sop->listening_socket = NULL;
-	//TODO above applies only to when destroying a passive socket 
-	/*
-	node_t curr;
-	for(curr=sop->list->head;curr!=NULL;curr=curr->next){
-		socket_t *s = curr->data;
-		if( ((socket_t *)curr->data)->id == so->id){
-			curr->data = NULL;
-		}
-	} 
-	printf("free?\n");
-	free(so);
-
+	sockets_on_port *sop;
+	HASH_FIND(hh, sockets_by_port, &port, sizeof(uint16_t), sop);
+	return (sop == NULL) ? 0 : -1;
 }
-*/
-void print_sockets(){
+
+
+//TODO : receive window size should be 65535 not 0 when established
+void print_sockets() {
+
 	socket_t *sock, *temp;
-	printf("\nSOCKETS----------------------------------------------\n");
+	//printf("\nSOCKETS----------------------------------------------\n");
+	printf("\nSockets:\n");
+
+	if (HASH_CNT(hh1,fd_list) == 0) {
+		printf("There are no socktes currently\n");
+		return;
+	}
 	HASH_ITER(hh1, fd_list, sock, temp){
 		print_socket(sock);
 	}
-	printf("-----------------------------------------------------\n\n");
+	//printf("-----------------------------------------------------\n\n");
 }
 
 void print_socket(socket_t *s){
+
 	char me[INET_ADDRSTRLEN];
 	char her[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &s->myaddr, me, INET_ADDRSTRLEN);
 	inet_ntop(AF_INET, &s->uraddr, her, INET_ADDRSTRLEN);
+	
+	if (s->state == LISTENING) {
 
-	printf("SOCKET ID: %d \nconnection{ %s (this node) (port: %d)\n <--%s--> (port: %d) %s }\n", s->id,me,s->myport,state_names[s->state].name,s->urport,her);
-	printf("		(at seqnum %d) 		(at seqnum %d)\n",s->myseq,s->ackseq);
+		printf("\tid: %d - state: %s, receive window: %d, send window: 0\n", 
+			s->id, state_names[s->state].name, WINSIZE);
+		return;
+
+	}
+	
+	printf("\tid: %d - state: %s, receive window: %d, send window: %d\n", 
+			s->id, state_names[s->state].name, CB_GETCAP(s->recvw->buf),CB_GETCAP(s->sendw->buf));
+	//printf("SOCKET ID: %d \nconnection{ %s (this node) (port: %d)\n <--%s--> (port: %d) %s }\n", s->id,me,s->myport,state_names[s->state].name,s->urport,her);
+	//printf("		(at seqnum %d) 		(at seqnum %d)\n",s->myseq,s->ackseq);
 }
 
 void set_socketstate(socket_t *so, int state){
@@ -203,7 +209,7 @@ void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uin
 	memcpy(p_tcp->payload, data, datasize);
 
 	//4. checksum
-	uint16_t checksum = tcp_checksum(p_tcp, TCPHDRSIZE+datasize+12);
+	uint16_t checksum = tcp_checksum(p_tcp, TCPHDRSIZE + datasize + 12);
   	header->check = checksum;
 	if (header->check == 0) {
 		printf("\t ERROR : something went wrong with checksum\n");
@@ -215,6 +221,9 @@ void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uin
 	memcpy(packet+TCPHDRSIZE, data, datasize);
 	return;
 }
+//recvfile f ilename port
+//sendfile ../testfiles/flights.csv 10.10.168.73 3
+//recvfile
 
 int send_tcp(socket_t *so, char *tcppacket, int size){
 	interface_t *nexthop = get_nexthop(so->uraddr);
@@ -230,7 +239,6 @@ tcphdr *tcp_craft_ack(socket_t *so){
 		so->adwindow);
 }
 
-
 void *buf_mgmt(void *arg){
 	
 	int s=(int)arg;
@@ -241,7 +249,7 @@ void *buf_mgmt(void *arg){
 	struct timeval nowt, last_probe;
 
 	while(1){
-
+		
 		if(!so->adwindow)	continue; //receiver window closed--probe
 		//TODO lock the window
 		unsent_bytes = CB_SIZE(sendw->buf);
@@ -251,6 +259,7 @@ void *buf_mgmt(void *arg){
 
 		//there's unacked bytes -- should we retransmit them?
 		if(unacked_segs){
+
 			fwind -= sendw->retrans_q_head->seqnum;
 
 			elt = sendw->retrans_q_head->prev;
@@ -307,11 +316,5 @@ void *buf_mgmt(void *arg){
 		}
 	}
 }
-
-
-
-
-
-
 
 

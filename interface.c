@@ -18,7 +18,6 @@
 
 #include "interface.h"
 
-
 int id_address(uint32_t destaddr){
 	node_t *curr;
 	for(curr=interfaces->head;curr!=NULL;curr=curr->next){
@@ -29,8 +28,6 @@ int id_address(uint32_t destaddr){
 	}
 	return 0;
 }
-
-
 
 interface_t *get_nexthop(uint32_t dest_vip){
 	rtu_routing_entry *entry;
@@ -51,9 +48,6 @@ interface_t *get_nexthop(uint32_t dest_vip){
 	printf("Interface not found for this nexthop address\n");
 	return NULL;
 }
-
-
-
 
 int setup_interface(char *filename) {
 

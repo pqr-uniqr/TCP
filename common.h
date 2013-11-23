@@ -23,7 +23,7 @@
 #include <stdbool.h>
 #include <mcheck.h>
 #include <signal.h>
-
+#include <pthread.h>
 
 #define DEBUG
 
@@ -83,26 +83,37 @@
 #define CB_EMPTY circular_buffer_is_empty
 #define CB_SIZE circular_buffer_get_size
 #define MIN(a,b) a>b? b:a
-//TCP state machine macros
-#define LISTENING 0
-#define SYN_SENT 1
-#define SYN_RCVD 2
-#define ESTABLISHED 3
 
 
 
+
+#define LISTENING 		0
+#define SYN_SENT 		1
+#define SYN_RCVD 		2
+#define ESTABLISHED 	3
+#define FIN_WAIT_1 		4
+#define CLOSE_WAIT		5
+#define FIN_WAIT_2		6
+#define LAST_ACK		7
+#define TIME_WAIT		8
+#define CLOSED			9
+#define CLOSING			10
+#define CLOSE			11
+
+#define ACKNOWLEDGE		5
+#define RST 			11
+#define MAX_SYN_REQ		3
 //mani
 #define LINE_MAX 50
 #define FILE_BUF_SIZE	1024
 
+#define SHUTDOWN_READ	0
+#define SHUTDOWN_WRITE	1
+#define SHUTDOWN_BOTH	2
 
 
 
-
-
-//uint32_t route_lookup(uint32_t final_dest); DEPRECATED
-//rtu_routing_entry *find_route_entry(uint32_t id); DEPRECATED
-//int routing_table_send_request(interface_t *port); DEPRECATED
-//int routing_table_update(rip_packet *table, uint32_t src_addr, uint32_t dest_addr, int type); DEPRECATED
-
-
+/************************** TCP ERROR CODES ************************/
+#define ENOTCONN        107
+#define EHOSTUNREACH    113     /* No route to host */
+#define EPIPE           32      /* Broken pipe */
