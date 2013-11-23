@@ -26,7 +26,7 @@
 #include <signal.h>
 #include <pthread.h>
 
-#define DEBUG
+//#define DEBUG
 
 //node.h defines the MACROS
 #define INFINITY 	16
@@ -105,6 +105,7 @@
 #define SYN_RCVD 		2
 #define ESTABLISHED 	3
 #define FIN_WAIT_1 		4
+
 #define CLOSE_WAIT		5
 #define FIN_WAIT_2		6
 #define LAST_ACK		7

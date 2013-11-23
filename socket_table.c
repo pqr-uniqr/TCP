@@ -312,7 +312,7 @@ void *buf_mgmt(void *arg){
 				//printf("	data in segment '%s'\n",data);
 				#endif
 
-				if(elt->seqnum == 65281){
+				if(elt->seqnum > 1047550){
 					double start = span.tv_sec + span.tv_usec /1000000.0;
 					gettimeofday(&span,NULL);
 					double end = span.tv_sec + span.tv_usec / 1000000.0;

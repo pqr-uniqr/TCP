@@ -5,7 +5,7 @@
 #include <fcntl.h>
 
 //undefine to see no printf()s
-#define DEBUG
+//#define DEBUG
 
 struct sendrecvfile_arg {
   int s;
@@ -218,20 +218,22 @@ void *recvfile_thr_func(void *arg){
   fd = thr_arg->fd;
   free(thr_arg);
 
+	socket_t *so = fd_lookup(s);
+
   s_data = v_accept(s, NULL);
   if (s_data < 0){
     fprintf(stderr, "v_accept() error: %s\n", strerror(-s_data));
     return NULL;
   }
-	sleep(1);
+
   ret = v_close(s);
   if (ret < 0){
     fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
     return NULL;
   }
 
-  while ((bytes_read = v_read(s_data, buf, FILE_BUF_SIZE)) != 0){
-
+  while (so->state < CLOSE_WAIT){
+		bytes_read = v_read(s_data, buf, FILE_BUF_SIZE);
     if (bytes_read < 0){
       fprintf(stderr, "v_read() error: %s\n", strerror(-bytes_read));
       //break;
@@ -255,6 +257,7 @@ void *recvfile_thr_func(void *arg){
   printf("recvfile on socket %d done", s_data);
   return NULL;
 }
+
 void recvfile_cmd(const char *line){
 
   int ret;
@@ -327,10 +330,6 @@ int v_write_all(int s, const void *buf, size_t bytes_requested){
     if (ret < 0){
       return ret;
     }
-    if (ret == 0){
-      fprintf(stderr, "warning: v_write() returned 0 before all bytes written\n");
-      return bytes_written;
-    }
     bytes_written += ret;
   }
   return bytes_written;
@@ -356,16 +355,16 @@ void *sendfile_thr_func(void *arg){
       fprintf(stderr, "read() error: %s\n", strerror(errno));
       break;
     }
-    ret = v_write_all(s, buf, bytes_read);
+    ret = v_write_all(s, buf, bytes_read);//TODO problem
     //printf("File contents being sent\n %s\n", buf);
 
     if (ret < 0){
       fprintf(stderr, "v_write() error: %s\n", strerror(-ret));
-      //break;
+      break;
     }
     if (ret != bytes_read){
 			//printf("ret %d bytes_read %d\n", ret, bytes_read);
-      //break;
+      break;
     }
   }
 
@@ -477,7 +476,6 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 	memcpy(tcpheader, packet+IPHDRSIZE, TCPHDRSIZE);
 	
 	tcp_ntoh(tcpheader);//necessary, is it though? (mani)
-
 #ifdef DEBUG
     printf("******************** Received tcp pacekt **************************: \n");
 #endif
@@ -728,7 +726,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 				} */
 
 				int payloadsize = ipheader->tot_len -IPHDRSIZE - TCPHDRSIZE;
-				printf("payloadsize = %d\n", payloadsize);
+				//printf("payloadsize = %d\n", payloadsize);
 				
 				//If there is new data in the packet
 				if(payloadsize){
@@ -816,9 +814,10 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 					}
 
 					//time to send ACK -- ACK or a duplicate ACK
-					tcphdr *ack =tcp_craft_ack(so);
-					tcp_hton(ack);
-					send_tcp(so, (char *)ack, TCPHDRSIZE);
+					//tcphdr *ack =tcp_craft_ack(so);
+					//tcp_hton(ack);
+					//send_tcp(so, (char *)ack, TCPHDRSIZE);
+					tcp_send_handshake(ESTABLISHED, so);
 					#ifdef DEBUG
 					printf("sending an ACK for %d\n", so->ackseq);
 					printf("---------------------------------------\n");

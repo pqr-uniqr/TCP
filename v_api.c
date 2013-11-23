@@ -139,6 +139,9 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 
 	so->myaddr = i->sourcevip;
 	so->myseq = rand() % MAXSEQ;
+#ifdef SIMPLESEQ
+	so->myseq = 0;
+#endif
 
 #ifdef DEBUG
 	printf(" v_connect() : so->* success\n");
@@ -556,6 +559,19 @@ int v_close(int socket) {
 #ifdef DEBUG
 		printf(_BLUE_"v_close: shutting down both read and write on socket %d "_NORMAL_"\n", socket);
 #endif
+
+	//while(!CB_EMPTY(socket->sendw->buf)){
+		//v_shutdown(socket, SHUTDOWN_READ);
+	//}
+	if(so->state == LISTENING) return 0;
+
+
+	seg_t *el;
+	int count;
+	DL_COUNT(so->sendw->retrans_q_head,el,count);
+	while(!CB_EMPTY(so->sendw->buf) || !CB_EMPTY(so->recvw->buf) || count){
+		DL_COUNT(so->sendw->retrans_q_head,el,count);
+	}
 
 	v_shutdown(socket, SHUTDOWN_BOTH);
 
