@@ -16,6 +16,9 @@ typedef struct socket{
 	uint32_t myseq;
 	uint32_t ackseq;
 
+	pthread_t th;
+	int read_lock;
+	
 	bqueue_t *q;
 	sendw_t *sendw;
 	recvw_t *recvw;

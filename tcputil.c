@@ -18,7 +18,6 @@
 
 #include "tcputil.h"
 
-
 void tcp_ntoh(tcphdr *header){
 
 	header->sourceport = ntohs(header->sourceport);
@@ -27,8 +26,7 @@ void tcp_ntoh(tcphdr *header){
 	header->ack_seq = ntohl(header->ack_seq);
 	header->orf = ntohs(header->orf);
 	header->adwindow = ntohs(header->adwindow);
-	//header->check = ntohs(header->check); //mani commented out
-	//header->urgptr= ntohs(header->urgptr);
+	
 }
 
 
@@ -40,10 +38,8 @@ void tcp_hton(tcphdr *header){
 	header->ack_seq = (uint32_t)htonl(header->ack_seq);
 	header->orf = (uint16_t)htons(header->orf);
 	header->adwindow = (uint16_t)htons(header->adwindow);
-	//header->check = htons(header->check); //mani commented out
-	//header->urgptr= htons(header->urgptr);
+	
 }
-
 
 //CONTAINS MALLOC
 tcphdr *tcp_mastercrafter(uint16_t srcport, uint16_t destport,

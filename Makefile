@@ -1,5 +1,6 @@
 C = gcc
-CFLAGS =  -std=gnu99 -D_REENTRANT -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
+CFLAGS = -w -Wall -std=gnu99 -D_REENTRANT -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
+
 LDFLAGS = -pthread 
 
 UTIL= csupport/list.c csupport/dbg.c csupport/ipsum.c csupport/parselinks.c csupport/bqueue.c csupport/circular_buffer.c 
