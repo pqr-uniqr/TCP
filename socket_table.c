@@ -25,7 +25,7 @@ struct pseudo_tcp
 	unsigned char ptcl;
 	unsigned short tcpl;
 	struct tcphdr tcp;
-	char payload[1024];
+	char payload[MSS];
 };
 
 
@@ -139,13 +139,15 @@ void socket_flush(socket_t *so){
 		//read and send data
 		tosend = MIN(MSS-TCPHDRSIZE-IPHDRSIZE, CB_SIZE(sendw->buf));
 		//data
-		unsigned char *payload = malloc(tosend);
+		unsigned char *payload = malloc(tosend);  //1360
 		//copy data from CB to payload
 		CB_READ(sendw->buf, payload, tosend);
-		char *tcppacket = malloc(TCPHDRSIZE+tosend);
+		char *tcppacket = malloc(TCPHDRSIZE+tosend); //1360 + 20 = 1380
 		memset(tcppacket, 0, TCPHDRSIZE+tosend); 
 		//fill up the packet
+		//										CBREAD   1360     1380 empty 
 		encapsulate_intcp(so, payload, tosend, tcppacket, so->myseq);
+		//										1380 				1360 + 20 = 1380
 		sent += send_tcp(so, tcppacket, tosend+TCPHDRSIZE);
 		//store transmitted segment in retransmission queue with timestamp
 		seg_t *el = malloc(sizeof(seg_t));
@@ -156,8 +158,11 @@ void socket_flush(socket_t *so){
 		el->data = payload;
 		el->retrans_count = 0;
 
+		if(el->seqnum == 1){
+			gettimeofday(&span, NULL);
+		}
 		so->myseq = (so->myseq + tosend) % MAXSEQ; //TODO wrap
-		free(tcppacket);
+		//free(tcppacket);
 
 	//}	
 
@@ -211,17 +216,14 @@ void encapsulate_intcp(socket_t *so, void *data, int datasize, char *packet, uin
 	return;
 }
 
+												//        1380        1380
 int send_tcp(socket_t *so, char *tcppacket, int size){
-	#ifdef DEBUG
-	printf("send_tcp\n");
-	#endif
 	interface_t *nexthop = get_nexthop(so->uraddr);
-	printf("mallocing packet %d\n", size);
-	char *packet = malloc(IPHDRSIZE + size);
-	printf("malloced packet\n");
+	char *packet = malloc(IPHDRSIZE + size); //1400
+	//																														data 1380    1380   
 	encapsulate_inip(so->myaddr, so->uraddr, (uint8_t)TCP, (void *) tcppacket, size, &packet);
 	send_ip(nexthop, packet, IPHDRSIZE+size);
-	free(packet);
+	//free(packet);
 	return 0;
 }
 
@@ -282,18 +284,25 @@ void *buf_mgmt(void *arg){
 					HASH_DEL(sendw->ackhistory, ack);
 				}
 
+
 				#ifdef DEBUG
 				printf("SEGMENT ACKNOWLEDGED:\n");
 				printf("	segment [%d ---%d bytes--- %d] \n",elt->seqnum, elt->seglen,
 							(elt->seqnum+elt->seglen-1) %MAXSEQ);
+				printf("rto updated to %f\n", sendw->rto);
 				printf("acked in %f seconds (transmitted %d times)\n", samplertt, 
 					elt->retrans_count+1);
-				printf("rto updated to %f\n", sendw->rto);
 				char *data = elt->data;
-				data[elt->seglen] = '\0';
+				//data[elt->seglen] = '\0';
 				//printf("	data in segment '%s'\n",data);
 				#endif
 
+				if(elt->seqnum == 65281){
+					double start = span.tv_sec + span.tv_usec /1000000.0;
+					gettimeofday(&span,NULL);
+					double end = span.tv_sec + span.tv_usec / 1000000.0;
+					printf("total span was %f\n", end-start);
+				}
 				//free(elt->data);
 				DL_DELETE(sendw->retrans_q_head, elt);
 				if(seqnum + elt->seglen == sendw->hack) break;

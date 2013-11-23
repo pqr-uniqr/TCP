@@ -26,7 +26,7 @@
 #include <signal.h>
 
 
-#define DEBUG
+//#define DEBUG
 
 //node.h defines the MACROS
 #define INFINITY 	16

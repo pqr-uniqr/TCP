@@ -21,7 +21,7 @@ struct pseudo_tcpp
 	uint8_t 		psdo_prot;
 	uint16_t		psdo_tcpl;
 	struct tcphdr 	tcp;
-	char 			payload[1024];
+	char 			payload[MSS];
 };
 
 //macros for tcputil.c -

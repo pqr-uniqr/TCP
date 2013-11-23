@@ -52,6 +52,7 @@ extern sockets_on_port *sockets_by_port;
 extern int maxsockfd;
 extern unsigned keylen;
 extern int expect;
+extern struct timeval span;
 
 
 socket_t *fd_lookup(int fdnumber);

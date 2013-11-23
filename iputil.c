@@ -21,7 +21,11 @@
 //takes in necessary information (vip, protocol..) and payload buffer. Makes a packet and returns it in char **packet
 int encapsulate_inip (uint32_t src_vip, uint32_t dest_vip, uint8_t protocol, void *data, int datasize, char **packet)
 {
-	struct iphdr *h=(struct iphdr *) malloc(IPHDRSIZE);
+	//data is 1380 bytes
+	//datasize is 1380
+	//packet is a 1400 byte malloced block
+	
+	struct iphdr *h=(struct iphdr *) malloc(sizeof(struct iphdr));
 	memset(h,0,IPHDRSIZE);
 
 	int packetsize = IPHDRSIZE + datasize;
@@ -35,15 +39,14 @@ int encapsulate_inip (uint32_t src_vip, uint32_t dest_vip, uint8_t protocol, voi
 	h->saddr = src_vip;
 	h->daddr = dest_vip;
 
-	memcpy(*packet,h,IPHDRSIZE);
+	memcpy(*packet,h,IPHDRSIZE); //copy 20 bytes
 	char *datapart = *packet + IPHDRSIZE;
-	memcpy(datapart, data, datasize);
-	int checksum = ip_sum(*packet, IPHDRSIZE);
+	memcpy(datapart, data, datasize); //copy 1380 bytes
+	int checksum = ip_sum(*packet, IPHDRSIZE);//calculate checksum
 	char *check = *packet + sizeof(uint8_t)*4 + sizeof(uint16_t)*3;
 	memcpy(check,&checksum,sizeof(uint16_t));
 
 	//printf("checksum is %d\n", checksum);
-
 	free(h);
 	return packetsize;
 }

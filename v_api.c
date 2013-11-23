@@ -142,8 +142,6 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	pthread_t mgmt_thr;
 	pthread_attr_t thr_attr;
 
-	int stacksize = (PTHREAD_STACK_MIN + 0x4000);
-	printf("!!!!this thread's stack size is %d \n", PTHREAD_STACK_MIN);
 	pthread_attr_init(&thr_attr);
 	pthread_attr_setdetachstate(&thr_attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(&mgmt_thr, &thr_attr, buf_mgmt, (void *) s);
@@ -161,7 +159,6 @@ void init_windows(socket_t *so){
 	so->recvw = malloc(sizeof(recvw_t));
 	CB_INIT(&so->sendw->buf, WINSIZE);
 	CB_INIT(&so->recvw->buf, WINSIZE); 
-	printf("this window's capacity is %d\n", CB_GETCAP(so->sendw->buf));
 
 	pthread_mutexattr_t mutexattr;
 	pthread_mutexattr_init(&mutexattr);

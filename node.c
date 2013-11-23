@@ -5,7 +5,7 @@
 #include <fcntl.h>
 
 //undefine to see no printf()s
-#define DEBUG
+//#define DEBUG
 
 struct sendrecvfile_arg {
   int s;
@@ -23,6 +23,7 @@ int maxsockfd = 0, expect = 0;
 unsigned keylen = offsetof(socket_t, uraddr)
 	+sizeof(uint32_t) -offsetof(socket_t, urport); 
 time_t lastRIPupdate;
+struct timeval span;
 
 
 struct {
@@ -144,7 +145,6 @@ int main ( int argc, char *argv[]) {
 	return EXIT_SUCCESS;
 }
 void *recvfile_thr_func(void *arg){
-	printf("recvfile_thr_func here\n");
   int s;
   int s_data;
   int fd;
@@ -170,15 +170,21 @@ void *recvfile_thr_func(void *arg){
     return NULL;
   }
 
+	int total_exp = 1048576;
+	int total = 0;
   while ((bytes_read = v_read(s_data, buf, FILE_BUF_SIZE)) != 0){
+
+		total+=bytes_read;
+		if(total_exp == total) break;
+
     if (bytes_read < 0){
       fprintf(stderr, "v_read() error: %s\n", strerror(-bytes_read));
-      break;
+      //break;
     }
     ret = write(fd, buf, bytes_read);
     if (ret < 0){
       fprintf(stderr, "write() error: %s\n", strerror(errno));
-      break;
+      //break;
     }
   }
 
@@ -300,10 +306,11 @@ void *sendfile_thr_func(void *arg){
 
     if (ret < 0){
       fprintf(stderr, "v_write() error: %s\n", strerror(-ret));
-      break;
+      //break;
     }
     if (ret != bytes_read){
-      break;
+			//printf("ret %d bytes_read %d\n", ret, bytes_read);
+      //break;
     }
   }
 
@@ -360,7 +367,6 @@ void sendfile_cmd(const char *line){
   }
   
   fd = open(filename, O_RDONLY);
-  printf("4\n");
   if (fd == -1){
     fprintf(stderr, "open() error: %s\n", strerror(errno));
   }
@@ -419,8 +425,9 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 	
 	//checksum
 	tcp_ntoh(tcpheader);//necessary, is it though? (mani)
-
-	tcp_print_packet(tcpheader);
+	#ifdef DEBUG
+	//tcp_print_packet(tcpheader);
+	#endif
 
 	//for first grip packet (SERVER)
 	if(SYN(tcpheader->orf) && !ACK(tcpheader->orf)){
@@ -492,6 +499,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 		else {
 			#ifdef DEBUG
 			printf("\nTCP_HANDLER CALL-----------------------\n");
+			printf("ack for %d\n",tcpheader->ack_seq);
 			#endif
 			//if anything arrives beyond the thidr grip, ESTABLISHED
 			if(so->state == SYN_RCVD){
@@ -526,7 +534,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 					printf("TCP: ack for %d arrived\n", tcpheader->ack_seq);
 					printf("Retransmission Queue Contents:\n");
 					DL_FOREACH(sendw->retrans_q_head, el){
-						printf(" [Segment: %d ---%d bytes--- %d]\n", el->seqnum, el->seglen,
+						printf(" [Segment: %d ---%d bytes--- %d]", el->seqnum, el->seglen,
 							el->seqnum+el->seglen-1);
 						if(el->seqnum < tcpheader->ack_seq) printf("NACKED");
 						printf("\n");
@@ -573,9 +581,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 						#endif
 
 						CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
-
 						so->ackseq = (so->ackseq + payloadsize) % MAXSEQ; //TODO wrap
-
 						DL_COUNT(rwin->oor_q_head, el, count);
 						//Any adjacent packets previously received out of order?
 						if(count){
@@ -605,12 +611,6 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 							printf("TCP: IRRELEVANT (OUT OF WINDOW OR REDUNDANT)\n");
 							#endif
 						}
-						/*  DOESN'T WORK WITH WRAP
-						if(so->ackseq > tcpheader->seqnum){
-							#ifdef DEBUG
-							printf("TCP: REDUNDANT\n");
-							#endif
-						}  */
 						else {
 							#ifdef DEBUG
 							printf("TCP: OUT OF ORDER (BUT RELEVANT)\n");
@@ -642,7 +642,11 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 					printf("sending an ACK for %d\n", so->ackseq);
 					printf("---------------------------------------\n");
 					#endif 
-				} else {printf("---------------------------------------\n");}
+				} else {
+					#ifdef DEBUG
+					printf("---------------------------------------\n");
+					#endif
+				}
 			}
 		}
 
