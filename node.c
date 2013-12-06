@@ -130,6 +130,7 @@ int main ( int argc, char *argv[]) {
 	//TODO clean up memory before exiting
 	list_free(&interfaces);
 
+	/* 
 	socket_t *entr, *tem;
 	HASH_ITER(hh1,socket_table, entr, tem){
 		HASH_DELETE(hh1,socket_table,entr);
@@ -138,7 +139,7 @@ int main ( int argc, char *argv[]) {
 		free(entr->sendw);
 		free(entr->recvw);
 		free(entr);
-	}
+	} */
 
 	rtu_routing_entry *entry, *temp;
 	HASH_ITER(hh, routing_table, entry, temp){
