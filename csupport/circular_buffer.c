@@ -12,7 +12,7 @@
 #include <stdio.h>
 
 // Uncomment this to enable debugging.
-#define CIRCULAR_BUFFER_DEBUG
+//#define CIRCULAR_BUFFER_DEBUG
 
 /**
  * Print buffer contents as if they are characters.

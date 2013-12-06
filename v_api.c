@@ -16,7 +16,6 @@
  * =====================================================================================
  */
 
-//#define SIMPLESEQ //start with Sequence number 0 --easier to debug
 #include "v_api.h"
 #include "common.h"
 
@@ -72,15 +71,11 @@ int v_listen(int socket){
 	if(sop->listening_socket) return -1; //"already listening on this port"
 
 	sop->listening_socket = so;
-	so->state = LISTENING;
+	set_socketstate(so, LISTENING);
 
 	return 0;
 
 }
-
-
-
-
 
 
 int v_connect(int socket, struct in_addr *addr, uint16_t port){
@@ -116,7 +111,7 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 #ifdef DEBUG
 		printf(" v_connect() error : fd_lookup() failed\n");
 #endif
-		so->state = CLOSE;
+		set_socketstate(so, CLOSE);
 		return -1;
 	}
 
@@ -133,7 +128,7 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 	//my addr is the interface IP address we will be sending request out to
 	interface_t *i = get_nexthop(so->uraddr);
 	if (i == NULL) {
-		so->state = CLOSE;
+		set_socketstate(so, CLOSE);
 		return -EHOSTUNREACH;
 	}
 
@@ -153,7 +148,7 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 
 	HASH_ADD(hh2, socket_table, urport, keylen, so);
 
-	so->state = SYN_SENT;
+	set_socketstate(so, SYN_SENT);
 
 #ifdef DEBUG
 	printf(" v_connect() : socket %d moved into state SYN_SENT\n", so->id);
@@ -196,7 +191,7 @@ int v_connect(int socket, struct in_addr *addr, uint16_t port){
 
 	// Could not connect
 	if (so->state == SYN_SENT || so->state == CLOSE) {
-		so->state = CLOSED;
+		set_socketstate(so, CLOSED);
 		return -ENOTCONN;
 	}
 
@@ -267,8 +262,9 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 
 	socket_t *so = fd_lookup(socket);
 
-	if((so == NULL) || (so->state == CLOSE)) {
+	if(so==NULL) return -1;
 
+	if(so->state == CLOSE) {
 #ifdef DEBUG
 		printf(_RED_"v_connect: Connection does not exists for socket %d "_NORMAL_"\n", so->id);
 #endif
@@ -294,7 +290,6 @@ int v_write(int socket, const unsigned char *buf, uint32_t nbyte){
 	if(CB_FULL(so->sendw->buf)) return 0; //"no write possible"
 	int cap = CB_GETCAP(so->sendw->buf);
 	int ret = CB_WRITE(so->sendw->buf, buf, MIN(cap, nbyte));
-	printf("%d written to the buffer\n", ret);
 	return ret;
 
 }
@@ -323,7 +318,6 @@ void init_windows(socket_t *so) {
 
 	return;
 }
-
 
 /**
 * TODO : take the pseudo header function out. NOTE : make sure it is generic
@@ -398,7 +392,6 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 		printf("\tWARNING : Could not make TCP header\n");
 		return;
 	}
-	
 
 	struct pseudo_tcpp *tcp_packet = (uint16_t *)malloc(sizeof(struct pseudo_tcpp));
 	memset(tcp_packet, 0x0, sizeof(struct pseudo_tcpp));
@@ -426,7 +419,7 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 	header->check = checksum;
 	if (header->check == 0) {
 		printf("\t ERROR : something went wrong with checksum\n");
-		return;
+		header->check = 0xffffff;
 	}
 
 	//6. TODO : error checking
@@ -450,23 +443,23 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 	//9. TCP/IP packet all set, sending time
 	send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
 
+	free(tcp_packet);
+	free(packet);
+	free(header);
+
 	return;
 }
 
 int v_read(int socket, unsigned char *buf, uint32_t nbyte){
-
 	socket_t *so = fd_lookup(socket);
 
 	if(so==NULL) return 0; //no such socket
 
 	recvw_t *recvw = so->recvw;
-
-	int toread = MIN(nbyte, CB_SIZE(recvw->buf));
+	int datasize = CB_SIZE(recvw->buf);
+	int toread = MIN(datasize, FILE_BUF_SIZE);
 
 	if(toread <= 0) return 0;
-
-	printf(_RED_"v_read\n");
-
 	int ret = CB_READ(recvw->buf, buf, toread);
 
 	/*
@@ -509,6 +502,7 @@ int v_shutdown(socket_t *socket, int shut_type) {
 		so->read_lock = 1; 
 
 	}
+
 	/******************* CLOSING RECIVING WINDOW ***************
 	* Send FIN
 	* 1. if current state == Established
@@ -516,26 +510,26 @@ int v_shutdown(socket_t *socket, int shut_type) {
 	* 2. if current state == CLOSE_WAIT (peer already closed down)
 	*	-> change to LAST_ACK
 	***********************************************************/
+
 	else if (shut_type == SHUTDOWN_WRITE) {
-		
 		printf("\t Request for shutdown write\n");
 		if (so->state == ESTABLISHED) {
-
-			so->state = FIN_WAIT_1;	
+			set_socketstate(so,FIN_WAIT_1);
 			tcp_send_handshake(FIN_WAIT_1, so);
 
 		}
 		else if (so->state == CLOSE_WAIT) {
-			so->state = LAST_ACK;
+			printf("a\n");
+			set_socketstate(so, LAST_ACK);
+			printf("b\n");
 			tcp_send_handshake(LAST_ACK, so);
 		}
 		
 		
 	}
 	else if (shut_type == SHUTDOWN_BOTH) {
-
 		printf("Request for shutdown read and write\n");		
-		v_shutdown(so->id, SHUTDOWN_READ);
+		v_shutdown(so->id, SHUTDOWN_READ); //recursion huh?
 		v_shutdown(so->id, SHUTDOWN_WRITE);
 
 	}
@@ -543,40 +537,59 @@ int v_shutdown(socket_t *socket, int shut_type) {
 }
 
 /******************** v_cose() ********************************
-transmit all the packets not yet ransmitted, then close the connection
+transmit all the packets not yet transmitted, then close the connection
 ***************************************************************/
 int v_close(int socket) {
 
 	socket_t *so = fd_lookup(socket);
 	
 	if(so == NULL) {
-#ifdef DEBUG
 		printf(_RED_"v_close: socket %d does not exist"_NORMAL_"\n", socket);
-#endif
 		return -EBADF;
 	}
-
 #ifdef DEBUG
-		printf(_BLUE_"v_close: shutting down both read and write on socket %d "_NORMAL_"\n", socket);
+	printf(_BLUE_"v_close: socket %d "_NORMAL_"\n", socket);
 #endif
 
 	//while(!CB_EMPTY(socket->sendw->buf)){
-		//v_shutdown(socket, SHUTDOWN_READ);
+	//	v_shutdown(socket, SHUTDOWN_READ);
 	//}
+	
 	if(so->state == LISTENING) return 0;
 
 
+	//this hack doesn't work sometimes
+	//for example, retransmission queue being empty doesn't always mean
+	//that everything has been sent (sent packet might have been in the process of
+	//being queued for retransmission)
+	
 	seg_t *el;
 	int count;
 	DL_COUNT(so->sendw->retrans_q_head,el,count);
-	while(!CB_EMPTY(so->sendw->buf) || !CB_EMPTY(so->recvw->buf) || count){
+	int sum = count + CB_SIZE(so->sendw->buf) + CB_SIZE(so->recvw->buf)
+		+ so->recvw->oor_q_size;
+	int newsum = sum;
+	//TODO shut down sending window
+	while(!CB_EMPTY(so->sendw->buf) || !CB_EMPTY(so->recvw->buf)
+		|| count || so->recvw->oor_q_size){
+
+		#ifdef DEBUG
+		if(sum != newsum){
+			printf(_BRED_"V_CLOSED STALLED-----------\n[retransq %d], [sendwindow %d], [recvwindow %d], [oorq %d]\n"_NORMAL_,
+				count, CB_SIZE(so->sendw->buf), CB_SIZE(so->recvw->buf), so->recvw->oor_q_size);
+			sum = newsum;
+		}
+		#endif
+
+		newsum = count + CB_SIZE(so->sendw->buf) + CB_SIZE(so->recvw->buf)
+			+ so->recvw->oor_q_size;
 		DL_COUNT(so->sendw->retrans_q_head,el,count);
 	}
 
+	//TODO memory stuff
+	printf(_BRED_"---CANCELING THREAD, DELETING SOCKET---\n"_NORMAL_);
 	v_shutdown(socket, SHUTDOWN_BOTH);
-
 	pthread_cancel(so->th);
-
 	HASH_DELETE(hh1, fd_list, so);
 
 	return 0;

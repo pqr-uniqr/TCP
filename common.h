@@ -27,6 +27,7 @@
 #include <pthread.h>
 
 //#define DEBUG
+#define SIMPLESEQ //start with Sequence number 0 --easier to debug
 
 //node.h defines the MACROS
 #define INFINITY 	16
@@ -92,10 +93,11 @@
 #define ALPHA (double) 0.8
 #define BETA (double) 1.5
 #define RTO_UBOUND 120
-#define RTO_LBOUND (double)0.001
-#define TIMEOUT (double) 0.001 //timeout macro for TCP retransmission
-#define MIN(a,b) a>b? b:a
-#define MAX(a,b) a>b? a:b
+#define RTO_LBOUND (double) 0.005
+#define TIMEOUT (double) 0.005 //timeout macro for TCP retransmission
+//#define MIN(X,Y) ((X) < (Y) ? : (X) : (Y))
+#define MIN(a,b) a > b? b:a
+#define MAX(a,b) a > b? a:b
 //TCP state machine macros
 
 

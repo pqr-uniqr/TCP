@@ -5,14 +5,13 @@
 #include <fcntl.h>
 
 //undefine to see no printf()s
-//#define DEBUG
 
 struct sendrecvfile_arg {
   int s;
   int fd;
 };
 
-int maxfd;
+int maxfd, dup_count = 0;
 list_t  *interfaces, *routes;
 socket_t *fd_list; //hash table (id, socket) 
 socket_t *socket_table; //hash table ({urport, myport, uraddr}, socket) 
@@ -85,7 +84,7 @@ int main ( int argc, char *argv[]) {
 		exit(1);
 	}
 
-	//create recv thrad TODO check errors and shit
+	//create recv thrad 
 	pthread_t recv_thr;
 	pthread_attr_t thr_attr;
 	pthread_attr_init(&thr_attr);
@@ -97,48 +96,55 @@ int main ( int argc, char *argv[]) {
 		//TODO these functions should be modified to count time
 
 		//command line parsing
-			unsigned k;
-			int ret;
-			(void)fflush(stdout);
-			fgets_ret = fgets(readbuf, CMDBUFSIZE, stdin);
-			if(fgets_ret == NULL){
-				break; //something went terribly wrong?
-			}
+		unsigned k;
+		int ret;
+		(void)fflush(stdout);
+		fgets_ret = fgets(readbuf, CMDBUFSIZE, stdin);
+		if(fgets_ret == NULL){
+			break; //something went terribly wrong?
+		}
 
-			ret = sscanf(readbuf, "%s", cmd); 
-			if(ret!=1){
-				fprintf(stderr, "syntax error (1st argument must be a command)\n");
-				continue;
-			}
+		ret = sscanf(readbuf, "%s", cmd); 
+		if(ret!=1){
+			fprintf(stderr, "syntax error (1st argument must be a command)\n");
+			continue;
+		}
 
-			if(!strcmp(cmd, "q")) break;
+		if(!strcmp(cmd, "q")) break;
 
-			for(k=0;k<sizeof(cmd_table)/sizeof(cmd_table[0]);k++){
-				if(!strcmp(cmd, cmd_table[k].command)){
-					cmd_table[k].handler(readbuf);
-					break;
-				}
-			}
-
-			if(k == sizeof(cmd_table)/sizeof(cmd_table[0])){
-				fprintf(stderr, "no valid command specified\n");
-				continue;
+		for(k=0;k<sizeof(cmd_table)/sizeof(cmd_table[0]);k++){
+			if(!strcmp(cmd, cmd_table[k].command)){
+				cmd_table[k].handler(readbuf);
+				break;
 			}
 		}
 
+		if(k == sizeof(cmd_table)/sizeof(cmd_table[0])){
+			fprintf(stderr, "no valid command specified\n");
+			continue;
+		}
+	}
+
 	printf("safe exiting\n");
 
-	//clean up memory before exiting
-
-
+	//TODO clean up memory before exiting
 	list_free(&interfaces);
+
+	socket_t *entr, *tem;
+	HASH_ITER(hh1,socket_table, entr, tem){
+		HASH_DELETE(hh1,socket_table,entr);
+		circular_buffer_free(&entr->sendw->buf);
+		circular_buffer_free(&entr->recvw->buf);
+		free(entr->sendw);
+		free(entr->recvw);
+		free(entr);
+	}
 
 	rtu_routing_entry *entry, *temp;
 	HASH_ITER(hh, routing_table, entry, temp){
 		HASH_DEL(routing_table, entry);
 		free(entry);
 	}
-
 	return EXIT_SUCCESS;
 }
 
@@ -221,6 +227,8 @@ void *recvfile_thr_func(void *arg){
 	socket_t *so = fd_lookup(s);
 
   s_data = v_accept(s, NULL);
+	so = fd_lookup(s_data);
+
   if (s_data < 0){
     fprintf(stderr, "v_accept() error: %s\n", strerror(-s_data));
     return NULL;
@@ -232,16 +240,23 @@ void *recvfile_thr_func(void *arg){
     return NULL;
   }
 
+	//must keep here until the sending guy says it's done
   while (so->state < CLOSE_WAIT){
 		bytes_read = v_read(s_data, buf, FILE_BUF_SIZE);
     if (bytes_read < 0){
       fprintf(stderr, "v_read() error: %s\n", strerror(-bytes_read));
-      //break;
+      break;
     }
+
     ret = write(fd, buf, bytes_read);
+		#ifdef DEBUG
+		if(ret > 0){
+			printf(_CYAN_"I/O: %d bytes written to file\n"_NORMAL_, ret);
+		}
+		#endif
     if (ret < 0){
       fprintf(stderr, "write() error: %s\n", strerror(errno));
-      //break;
+      break;
     }
   }
 
@@ -249,6 +264,29 @@ void *recvfile_thr_func(void *arg){
   if (ret < 0){
     fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
   }
+
+	//for receiving retransmitted stuff
+	//receive until... what should be the termination condition?
+	//until there's nothing to be read && we don't have out of order packets hanging
+	while((bytes_read = v_read(s_data,buf, FILE_BUF_SIZE)) ||
+			so->recvw->oor_q_size){
+		if(bytes_read<0) break;
+		if(!bytes_read) break;
+		ret = write(fd, buf, bytes_read);
+		#ifdef DEBUG
+		if(ret > 0){
+			printf(_CYAN_"I/O: %d bytes written to file (retransmission)\n"_NORMAL_,
+				ret, so->state);
+		}
+		#endif
+		if(ret<0){
+			fprintf(stderr, "write() error:%s\n", strerror(errno));
+			break;
+		}
+	}
+	
+	
+
   ret = close(fd);
   if (ret == -1){
     fprintf(stderr, "close() error: %s\n", strerror(errno));
@@ -350,13 +388,20 @@ void *sendfile_thr_func(void *arg){
   fd = thr_arg->fd;
   free(thr_arg);
 
+	//will write to circular buffer until end of file
+	//reads at most 1024 bytes
   while((bytes_read = read(fd, buf, sizeof(buf))) != 0){
     if (bytes_read == -1){
       fprintf(stderr, "read() error: %s\n", strerror(errno));
       break;
     }
-    ret = v_write_all(s, buf, bytes_read);//TODO problem
-    //printf("File contents being sent\n %s\n", buf);
+
+		#ifdef DEBUG
+		printf(_CYAN_"I/O: %d bytes read from file\n"_NORMAL_, bytes_read);
+		#endif
+		
+		//will block until everything in the buffer is written
+    ret = v_write_all(s, buf, bytes_read);
 
     if (ret < 0){
       fprintf(stderr, "v_write() error: %s\n", strerror(-ret));
@@ -368,7 +413,11 @@ void *sendfile_thr_func(void *arg){
     }
   }
 
+	//what about retransmission??? buffer mgmt will take care of it
+	//--v_close will not close down buf_mgmt thread until 
+	//retransmission queue and sending window are empty
   ret = v_close(s);
+
   if (ret < 0){
     fprintf(stderr, "v_close() error: %s\n", strerror(-ret));
   }
@@ -477,15 +526,17 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 	
 	tcp_ntoh(tcpheader);//necessary, is it though? (mani)
 #ifdef DEBUG
-    printf("******************** Received tcp pacekt **************************: \n");
+    printf("\n******************** Received tcp packet **************************: \n");
 #endif
 	
   if (is_listening(tcpheader->destport) == NULL) {
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 0 : No Listening socket, simply ignoring the SYN"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 0 : No Listening socket, simply ignoring the SYN"_NORMAL_"\n");
 #endif
 
+		free(ipheader);
+		free(tcpheader);
     return;
   }
 
@@ -499,7 +550,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   if(SYN(tcpheader->orf) && !ACK(tcpheader->orf)){
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 1 : handshake (1), receieved SYN"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 1 : handshake (1), receieved SYN"_NORMAL_"\n");
     tcp_print_packet(tcpheader);
 #endif
 
@@ -508,6 +559,7 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
     memcpy(tbq+TCPHDRSIZE+SIZE32, &ipheader->daddr, SIZE32);
     NQ(sop->listening_socket->q, tbq);
 
+		free(ipheader);
     return;
   } 
 
@@ -519,11 +571,12 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   key->uraddr = ipheader->saddr;
   socket_t *so; 
   HASH_FIND(hh2, socket_table, &key->urport, keylen, so);
+	free(key);
   
   if(so == NULL){
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t Warning : non-request packet received from stranger"_NORMAL_"\n");
+    printf(_YELLOW_"Warning : non-request packet received from stranger"_NORMAL_"\n");
 #endif
       free(tcpheader);
       free(ipheader);
@@ -537,16 +590,15 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 #ifdef DEBUG
     printf(_YELLOW_"\t CASE 2 : handshake (2), receieved SYN/ACK"_NORMAL_"\n");
-    //tcp_print_packet(tcpheader);
 #endif
 
-      printf(_BBLUE_" SYN_SENT --> ESTABLISHED"_NORMAL_"\n");
-      so->state = ESTABLISHED;
-      so->ackseq= ++(tcpheader->seqnum); 
-      //so->adwindow = tcpheader->adwindow;
-
-      tcp_send_handshake(ESTABLISHED, so);
-      return;
+    set_socketstate(so, ESTABLISHED);
+    so->ackseq= ++(tcpheader->seqnum); 
+    //so->adwindow = tcpheader->adwindow;
+    tcp_send_handshake(ESTABLISHED, so);
+		free(tcpheader);
+		free(ipheader);
+    return;
   }
 
   /**** Special CASE : Both close at the same time*************
@@ -555,10 +607,10 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   else if (FIN(tcpheader->orf) && ACK((tcpheader->orf)) && (so->state == FIN_WAIT_1)) {
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 3 : Both close at the same time"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 3 : Both close at the same time"_NORMAL_"\n");
 #endif
 
-    so->state = CLOSING;
+    set_socketstate(so, CLOSING);
     so->ackseq = tcpheader->seqnum+1;
     so->ackseq = tcpheader->ack_seq+1;
     tcp_send_handshake(CLOSING, so);
@@ -574,22 +626,19 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   else if (FIN(tcpheader->orf)) {
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 4 : FIN"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 4 : FIN"_NORMAL_"\n");
 #endif
 
     if (so->state == ESTABLISHED) {
-
       so->ackseq = tcpheader->seqnum+1;
-      so->state = CLOSE_WAIT;
+      set_socketstate(so, CLOSE_WAIT);
       tcp_send_handshake(ACKNOWLEDGE, so);
-
     }
     else if (so->state == FIN_WAIT_2) {
-
       so->ackseq = tcpheader->seqnum+1;
-      so->state = TIME_WAIT;
+      set_socketstate(so, TIME_WAIT);
       tcp_send_handshake(ACKNOWLEDGE, so);
-
+			set_socketstate(so, CLOSED);
     }
 
   }
@@ -602,10 +651,10 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   else if (ACK((tcpheader->orf)) && !SYN((tcpheader->orf)) && (so->state == FIN_WAIT_1)) {
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 4 : ACK while we are FIN_WAIT_1"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 4 : ACK while we are FIN_WAIT_1"_NORMAL_"\n");
 #endif
 
-    so->state = FIN_WAIT_2;
+    set_socketstate(so, FIN_WAIT_2);
     tcpheader->seqnum = tcpheader->seqnum;
     
   }
@@ -617,10 +666,10 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   else if (ACK((tcpheader->orf)) && !SYN((tcpheader->orf)) && (so->state == LAST_ACK)) {
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 5 : ACK and we are LAST_ACK"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 5 : ACK and we are LAST_ACK"_NORMAL_"\n");
 #endif
 
-    so->state = CLOSED;
+    set_socketstate(so, CLOSED);
     tcpheader->seqnum = tcpheader->seqnum;
     
   }
@@ -634,200 +683,170 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
   else if (ACK((tcpheader->orf)) && !SYN((tcpheader->orf)) && (so->state == CLOSING)) {
 
 #ifdef DEBUG
-    printf(_YELLOW_"\t CASE 6 : ACK and we are CLOSING"_NORMAL_"\n");
+    printf(_YELLOW_"CASE 6 : ACK and we are CLOSING"_NORMAL_"\n");
 #endif
 
-    so->state = TIME_WAIT;
+    set_socketstate(so, TIME_WAIT);
     tcpheader->seqnum = tcpheader->seqnum;
     
   }
 
 	else {
+		#ifdef DEBUG
+    printf(_YELLOW_"CASE 7 : ACK general"_NORMAL_"\n");
+		#endif
 
-#ifdef DEBUG
-    printf(_YELLOW_"\t CASE 7 : ACK general"_NORMAL_"\n");
-#endif
-      /*
-			if(so->state != SYN_SENT){
-					free(tcpheader);
-					free(ipheader);
-					return;
-			}
+		//if anything arrives beyond the third grip, ESTABLISHED
+		if(so->state == SYN_RCVD){
 			set_socketstate(so, ESTABLISHED);
-			so->ackseq= ++(tcpheader->seqnum);
-			so->sendw->adwindow = tcpheader->adwindow;
-
-			tcp_send_handshake(3, so);
-			free(tcpheader);
 			free(ipheader);
+			free(tcpheader);
 			return;
-		}*/
+		}
 
-		//third grip & beyond
-		//else {
+		//SLDING WINDOW GOES HERE!
+		if(ACK(tcpheader->orf)){
 
 			#ifdef DEBUG
-			printf("\nTCP_HANDLER CALL-----------------------\n");
-			printf("ack for %d\n",tcpheader->ack_seq);
+			printf("\nSLIDING WINDOW CALLED-----------------------\n");
 			#endif
 
-			//if anything arrives beyond the thidr grip, ESTABLISHED
-			if(so->state == SYN_RCVD){
-				set_socketstate(so, ESTABLISHED);
-				return;
-			}
+			seg_t *el, *temp;
+			int count;
+			sendw_t *sendw = so->sendw;
 
-			//SLDING WINDOW GOES HERE!
-			if(ACK(tcpheader->orf)){
+			//if this is a novel ack
+			pthread_mutex_lock(&sendw->lock);
+			if(tcpheader->ack_seq != sendw->hack){
 
-				seg_t *el, *temp;
-				int count;
-				sendw_t *sendw = so->sendw;
+				//store highest ACK for fast dequeuing from retransmission queue
+				sendw->hack = tcpheader->ack_seq;
+				//store adwindow of the corresponding receiving window
+				sendw->adwindow = tcpheader->adwindow;
 
-				//if this is a novel ack
-				if(tcpheader->ack_seq != sendw->hack){
-					pthread_mutex_lock(&sendw->lock);
+				//store ack in ackhistory table for RTT calculation
+				ack_t *nack = malloc(sizeof(ack_t));
+				nack->ackseq= tcpheader->ack_seq;
+				gettimeofday(&nack->tstamp, NULL);
+				HASH_ADD(hh, sendw->ackhistory, ackseq, sizeof(uint32_t), nack);
 
-				//printf("Retransmission Queue Contents:\n");
-				//DL_FOREACH(sendw->retrans_q_head, el){
-					//printf(" [Segment: %d ---%d bytes--- %d]\n", el->seqnum, el->seglen,
-						//el->seqnum+el->seglen-1);
-				//}
-
-					//store highest ACK for fast dequeuing from retransmission queue
-					sendw->hack = tcpheader->ack_seq;
-					//store adwindow of the corresponding receiving window
-					sendw->adwindow = tcpheader->adwindow;
-
-					//store ack in ackhistory table for RTT calculation
-					ack_t *nack = malloc(sizeof(ack_t));
-					nack->ackseq= tcpheader->ack_seq;
-					gettimeofday(&nack->tstamp, NULL);
-					HASH_ADD(hh, sendw->ackhistory, ackseq, sizeof(uint32_t), nack);
-
-					//show newly acked segments
-					#ifdef DEBUG
-					printf("TCP: ack for %d arrived\n", tcpheader->ack_seq);
-					printf("Retransmission Queue Contents:\n");
-					DL_FOREACH(sendw->retrans_q_head, el){
-						printf(" [Segment: %d ---%d bytes--- %d]", el->seqnum, el->seglen,
-							el->seqnum+el->seglen-1);
-						if(el->seqnum < tcpheader->ack_seq) printf("NACKED");
-						printf("\n");
-					}
-					printf("\n");
-					#endif
-					pthread_mutex_unlock(&sendw->lock);
-				}
+				//show newly acked segments
+				#ifdef DEBUG
+				printf("TCP: ack for %d arrived\n", tcpheader->ack_seq);
+				#endif
 
 				/*  
-				if(!newly_acked && count){
-					//TODO this must be a duplicate ack?
+				printf(_WHITE_"Retransmission Queue Contents:\n"_NORMAL_);
+				DL_FOREACH(sendw->retrans_q_head, el){
+					printf(_WHITE_"*segment: [%d ---%d bytes--- %d]"_NORMAL_, el->seqnum, el->seglen,
+						el->seqnum+el->seglen-1);
+					if(el->seqnum < tcpheader->ack_seq) printf(_GREEN_"NACKED"_NORMAL_);
+					printf("\n");
 				} */
+			} 
 
-				int payloadsize = ipheader->tot_len -IPHDRSIZE - TCPHDRSIZE;
-				//printf("payloadsize = %d\n", payloadsize);
+			pthread_mutex_unlock(&sendw->lock);
+
+			int payloadsize = ipheader->tot_len -IPHDRSIZE - TCPHDRSIZE;
 				
-				//If there is new data in the packet
-				if(payloadsize){
-
-					#ifdef DEBUG
-					printf("Packet contains data:\n");
-					printf("	[segment: %d ---(%d bytes)--- %d]\n", tcpheader->seqnum,
-					payloadsize, (tcpheader->seqnum + payloadsize - 1) % MAXSEQ);
-					#endif
-					recvw_t *rwin = so->recvw;
-
+			//If there is new data in the packet
+			if(payloadsize){
+				#ifdef DEBUG
+				printf("Packet contains data:\n");
+				printf(_WHITE_"*segment: [%d ---(%d bytes)--- %d]\n"_NORMAL_, tcpheader->seqnum,
+				payloadsize, (tcpheader->seqnum + payloadsize - 1) % MAXSEQ);
+				#endif
+				recvw_t *rwin = so->recvw;
 					//we don't have space for more data
-					if(CB_FULL(rwin->buf)){
-						#ifdef DEBUG
-						printf("TCP: recv window full\n");
-						#endif
-						free(ipheader);
-						free(tcpheader);
-						return;
-					}
-
-					//if we send the right adwindow of CB_GETCAP - size of OOr queue,
-					//OOr chains will never overflow
-					int cap = CB_GETCAP(rwin->buf);
-
-					//if this segment is what we are expecting
-					if(tcpheader->seqnum == so->ackseq){
-						#ifdef DEBUG 
-						printf("TCP: IN ORDER\n");
-						#endif
-
-						CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
-						so->ackseq = (so->ackseq + payloadsize) % MAXSEQ; //TODO wrap
-						DL_COUNT(rwin->oor_q_head, el, count);
-						//Any adjacent packets previously received out of order?
-						if(count){
-							uint32_t adjseq = (tcpheader->seqnum + payloadsize) % MAXSEQ; //TODO wrap
-
-							while(1){
-								el = NULL;
-								DL_SEARCH_SCALAR(rwin->oor_q_head, el, seqnum, adjseq);
-
-								if(el==NULL) break; //adjacent chain broken!
-								//adjacent chain continues!
-								CB_WRITE(rwin->buf, el->data,
-									MIN(el->seglen, cap - payloadsize));
-								so->ackseq  = (so->ackseq + el->seglen) % MAXSEQ; //TODO wrap
-								adjseq = (el->seqnum + el->seglen) % MAXSEQ; //TODO wrap
-
-								//get rid of it from the OOr q
-								rwin->oor_q_size -= el->seglen;
-								DL_DELETE(rwin->oor_q_head, el);
-							}
-						}
-
-					} else {
-					
-						if(so->ackseq + CB_GETCAP(rwin->buf) < tcpheader->seqnum || 
-								tcpheader->seqnum < so->ackseq){
-							#ifdef DEBUG
-							printf("TCP: IRRELEVANT (OUT OF WINDOW OR REDUNDANT)\n");
-							#endif
-						}
-						else {
-							#ifdef DEBUG
-							printf("TCP: OUT OF ORDER (BUT RELEVANT)\n");
-							#endif
-							//check if this out of order packet has already been received
-							el = NULL;
-							DL_SEARCH_SCALAR(rwin->oor_q_head, el, seqnum, tcpheader->seqnum);
-						
-							if(el==NULL){
-								printf("TCP: storing this OOO packet\n");
-								el = malloc(sizeof(seg_t));
-								DL_APPEND(rwin->oor_q_head, el);
-								rwin->oor_q_size+=payloadsize;
-								el->seqnum = tcpheader->seqnum;
-								el->seglen = payloadsize;
-								unsigned char *payload = malloc(payloadsize);
-								memcpy(payload, packet+IPHDRSIZE+TCPHDRSIZE,payloadsize);
-								el->data = payload;
-								DL_SORT(rwin->oor_q_head, seqcmp);
-							}
-						}
-					}
-
-					//time to send ACK -- ACK or a duplicate ACK
-					//tcphdr *ack =tcp_craft_ack(so);
-					//tcp_hton(ack);
-					//send_tcp(so, (char *)ack, TCPHDRSIZE);
-					tcp_send_handshake(ESTABLISHED, so);
+				if(CB_FULL(rwin->buf)){
 					#ifdef DEBUG
-					printf("sending an ACK for %d\n", so->ackseq);
-					printf("---------------------------------------\n");
-					#endif 
-				} else {
-					#ifdef DEBUG
-					printf("---------------------------------------\n");
+					printf(_BRED_"\tTCP: recv window full\n"_NORMAL_);
 					#endif
+					free(ipheader);
+					free(tcpheader);
+					return;
 				}
+
+				//if we send the right adwindow of CB_GETCAP - size of OOr queue,
+				//OOr chains will never overflow
+				int cap = CB_GETCAP(rwin->buf);
+				//if this segment is what we are expecting
+				if(tcpheader->seqnum == so->ackseq){
+					#ifdef DEBUG 
+					printf(_GREEN_"TCP: SEGMENT IN ORDER\n"_NORMAL_);
+					#endif
+					CB_WRITE(rwin->buf, packet+IPHDRSIZE+TCPHDRSIZE, MIN(cap, payloadsize));
+					so->ackseq = (so->ackseq + payloadsize) % MAXSEQ; //TODO wrap
+					DL_COUNT(rwin->oor_q_head, el, count);
+					//Any adjacent packets previously received out of order?
+					if(count){
+						uint32_t adjseq = (tcpheader->seqnum + payloadsize) % MAXSEQ; //TODO wrap
+
+						while(1){
+							el = NULL;
+							DL_SEARCH_SCALAR(rwin->oor_q_head, el, seqnum, adjseq);
+								if(el==NULL) break; //adjacent chain broken!
+							//adjacent chain continues!
+							CB_WRITE(rwin->buf, el->data,
+								MIN(el->seglen, cap - payloadsize));
+							so->ackseq  = (so->ackseq + el->seglen) % MAXSEQ; //TODO wrap
+							adjseq = (el->seqnum + el->seglen) % MAXSEQ; //TODO wrap
+								//get rid of it from the OOr q
+							rwin->oor_q_size -= el->seglen;
+							DL_DELETE(rwin->oor_q_head, el);
+						}
+					}
+
+				} else {
+					
+					if(so->ackseq + CB_GETCAP(rwin->buf) < tcpheader->seqnum || 
+						tcpheader->seqnum < so->ackseq){
+						#ifdef DEBUG
+						printf(_YELLOW_"TCP: PACKET IRRELEVANT (OUT OF WINDOW OR REDUNDANT)\n"_NORMAL_);
+						#endif
+					}
+					else {
+						#ifdef DEBUG
+						printf(_RED_"TCP: OUT OF ORDER (BUT RELEVANT)\n"_NORMAL_);
+						#endif
+						//check if this out of order packet has already been received
+						el = NULL;
+						DL_SEARCH_SCALAR(rwin->oor_q_head, el, seqnum, tcpheader->seqnum);
+						if(el==NULL){
+							el = malloc(sizeof(seg_t));
+							DL_APPEND(rwin->oor_q_head, el);
+							rwin->oor_q_size+=payloadsize;
+							el->seqnum = tcpheader->seqnum;
+							el->seglen = payloadsize;
+							unsigned char *payload = malloc(payloadsize);
+							memcpy(payload, packet+IPHDRSIZE+TCPHDRSIZE,payloadsize);
+							el->data = payload;
+							DL_SORT(rwin->oor_q_head, seqcmp);
+						}
+					}
+				}
+
+				//time to send ACK -- ACK or a duplicate ACK
+				/*
+				tcphdr *ack = tcp_craft_ack(so);	
+				tcp_hton(ack);
+				send_tcp(so, (char *)ack, TCPHDRSIZE);
+				free(ack); */
+				tcp_send_handshake(ESTABLISHED, so);
+				free(tcpheader);
+				free(ipheader);
+				#ifdef DEBUG
+				printf("sending an ACK for %d\n", so->ackseq);
+				printf("%d bytes left on the buffer\n", 
+					CB_GETCAP(so->recvw->buf) - so->recvw->oor_q_size);
+				printf("---------------------------------------\n");
+				#endif 
+			} else {
+				#ifdef DEBUG
+				printf("---------------------------------------\n");
+				#endif
 			}
+		}
 	}
   return;
 }
