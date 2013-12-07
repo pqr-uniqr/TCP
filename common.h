@@ -26,7 +26,7 @@
 #include <signal.h>
 #include <pthread.h>
 
-//#define DEBUG
+#define DEBUG
 #define SIMPLESEQ //start with Sequence number 0 --easier to debug
 
 //node.h defines the MACROS
@@ -116,7 +116,7 @@
 #define CLOSING			10
 #define CLOSE			11
 
-#define ACKNOWLEDGE		5
+#define ACKNOWLEDGE		12
 #define RST 			11
 #define MAX_SYN_REQ		3
 //mani

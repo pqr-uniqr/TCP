@@ -552,7 +552,6 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
 
 #ifdef DEBUG
     printf(_YELLOW_"CASE 1 : handshake (1), receieved SYN"_NORMAL_"\n");
-    tcp_print_packet(tcpheader);
 #endif
 
     void *tbq= realloc(tcpheader, TCPHDRSIZE + 2*SIZE32);
@@ -639,9 +638,13 @@ void tcp_handler(const char *packet, interface_t *inf, int received_bytes){
       so->ackseq = tcpheader->seqnum+1;
       set_socketstate(so, TIME_WAIT);
       tcp_send_handshake(ACKNOWLEDGE, so);
-			set_socketstate(so, CLOSED);
-    }
-
+	set_socketstate(so, CLOSED);
+    } 
+    /*
+    else {
+	so->ackseq = tcpheader->seqnum+1;
+	tcp_send_handshake(ACKNOWLEDGE,so);
+    } */
   }
 
   /************** CASE 2 : ONLY ACK received and [state=FIN_WAIT_1] **************

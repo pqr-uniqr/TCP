@@ -375,6 +375,11 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 									socket->myseq, socket->ackseq, 
 									1,0,0,0,1,MAXSEQ);
 			break;
+		case ACKNOWLEDGE:
+			printf("RST, ACK\n");
+			header = tcp_mastercrafter(socket->myport, socket->urport,
+					socket->myseq, socket->ackseq,
+					0,0,0,0,1,MAXSEQ);
 
 		case RST: // RST packet
 			header = tcp_mastercrafter(socket->myport, socket->urport,
@@ -441,7 +446,7 @@ void tcp_send_handshake(int gripnum, socket_t *socket){
 	encapsulate_inip(socket->myaddr,socket->uraddr,(uint8_t)TCP,header, TCPHDRSIZE, &packet);
 
 	//9. TCP/IP packet all set, sending time
-	send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
+	int ret = send_ip(nexthop, packet, TCPHDRSIZE+IPHDRSIZE);
 
 	free(tcp_packet);
 	free(packet);
